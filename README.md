@@ -1,2 +1,0 @@
-# Streamlit
-Yangon TB Project
