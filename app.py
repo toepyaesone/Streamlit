@@ -42,11 +42,12 @@ st.set_page_config(
 # Configuration
 # -----------------------------------------------------------------------------
 # Put these in Streamlit Community Cloud -> App -> Settings -> Secrets:
-# SUPABASE_URL = "https://....supabase.co"
-# SUPABASE_KEY = "sb_publishable_..."
 
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL", ""))
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY", ""))
+SUPABASE_URL_ygntbpro = "https://kocihpxevlowqbguhstf.supabase.co"
+SUPABASE_KEY_ygntbpro = "sb_publishable_JtrNLjMNSvZ5LzvXKbv2xw_mj-hl5MD"
+
+SUPABASE_URL = st.secrets.get("SUPABASE_URL_ygntbpro", os.getenv("SUPABASE_URL", ""))
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY_ygntbpro", os.getenv("SUPABASE_KEY", ""))
 
 COLUMN_UNCODE = [
     "Team", "Sex", "VOL", "Referralfor", "Cough", "Fever", "Wtloss",
