@@ -522,10 +522,10 @@ elif section == "TB Care Cascade":
 elif section == "Primary Healthcare":
     c1, c2 = st.columns(2)
     with c1:
-        safe_section("Primary Healthcare Bubble Distribution", lambda: safe_plotly(
+        safe_section("Primary Healthcare Distribution", lambda: safe_plotly(
             plotly_scatter_bubble(
                 df=filtered_df, x_col="PrimaryHealthcare", yaxis="Case",
-                chartTitle="Primary Healthcare Bubble Distribution", exclude_blank=True,
+                chartTitle="Primary Healthcare Among Examined Cases", exclude_blank=True,
             )
         ))
     with c2:
@@ -537,7 +537,7 @@ elif section == "Primary Healthcare":
         plot_scatter_sunburst(
             df=filtered_df,
             x_col="PrimaryHealthcare",
-            yaxis="Case",
+            yaxis="Approach",
             main_title="Primary Healthcare Consultation",
             exclude_blank=False,
         )
