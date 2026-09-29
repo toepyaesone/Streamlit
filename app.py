@@ -376,7 +376,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 #     horizontal=True,
 # )
 with tab1:
-    st.subheader("Overview")
+    # st.subheader("Overview")
 # if section == "Overview":
     safe_section("Target vs Achievement", lambda: safe_plotly(
         plotly_achievement_target_dropdown(
@@ -445,7 +445,7 @@ with tab1:
     ))
 
 with tab2:
-    st.subheader("TB Care Cascade")
+    # st.subheader("TB Care Cascade")
 # elif section == "TB Care Cascade":
     df_tb = filtered_df[filtered_df["Case"] == "TB"].copy()
     df_tb["HIVStatus"] = df_tb["HIVStatus"].replace({"P": "Positive", "N": "Negative", "Y": "Positive", "U": "Unknown", "": "Unknown"})
@@ -531,7 +531,7 @@ with tab2:
                 )
             ))
 with tab3:
-    st.subheader("Primary Healthcare")
+    # st.subheader("Primary Healthcare")
 # elif section == "Primary Healthcare":
     c1, c2 = st.columns(2)
     with c1:
@@ -568,7 +568,7 @@ with tab3:
         )
     ))
 with tab4:
-    st.subheader("Detailed Analysis")
+    # st.subheader("Detailed Analysis")
 # else:
     charts = plotly_target_achievement_allcharts(
         dataframe=progress,
