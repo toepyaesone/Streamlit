@@ -362,22 +362,22 @@ st.caption(
 # every chart on every Streamlit interaction.
 # -----------------------------------------------------------------------------
 
+# tab1, tab2, tab3, tab4 = st.tabs([
+#     "📊 Overview",
+#     "🫁 TB Care Cascade",
+#     "🏥 Primary Healthcare",
+#     "🔎 Detailed Analysis"
+# ])
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Overview",
-    "🫁 TB Care Cascade",
-    "🏥 Primary Healthcare",
-    "🔎 Detailed Analysis"
-])
+section = st.radio(
+    "Dashboard section",
+    ["Overview", "TB Care Cascade", "Primary Healthcare", "Detailed Analysis"],
+    horizontal=True,
+)
 
-# section = st.radio(
-#     "Dashboard section",
-#     ["Overview", "TB Care Cascade", "Primary Healthcare", "Detailed Analysis"],
-#     horizontal=True,
-# )
-with tab1:
-    # st.subheader("Overview")
-# if section == "Overview":
+# with tab1:
+#     st.subheader("Overview")
+if section == "Overview":
     safe_section("Target vs Achievement", lambda: safe_plotly(
         plotly_achievement_target_dropdown(
             dataframe=progress,
@@ -444,9 +444,9 @@ with tab1:
         plotly_gender_agegroup(filtered_df, "Sex", "Age", 500)
     ))
 
-with tab2:
-    # st.subheader("TB Care Cascade")
-# elif section == "TB Care Cascade":
+# with tab2:
+#     st.subheader("TB Care Cascade")
+elif section == "TB Care Cascade":
     df_tb = filtered_df[filtered_df["Case"] == "TB"].copy()
     df_tb["HIVStatus"] = df_tb["HIVStatus"].replace({"P": "Positive", "N": "Negative", "Y": "Positive", "U": "Unknown", "": "Unknown"})
     df_tb["DM1"] = df_tb["DM1"].replace({"No DM": "DM - No", "DM-New": "DM - Yes", "DM-Old": "DM - Yes", "": "Unknown"})
@@ -530,9 +530,9 @@ with tab2:
                     chart_title="DOTS Provision",
                 )
             ))
-with tab3:
-    # st.subheader("Primary Healthcare")
-# elif section == "Primary Healthcare":
+# with tab3:
+#     st.subheader("Primary Healthcare")
+elif section == "Primary Healthcare":
     c1, c2 = st.columns(2)
     with c1:
         safe_section("Primary Healthcare Distribution", lambda: safe_plotly(
@@ -567,9 +567,9 @@ with tab3:
             title="Average Consultation Per Day",
         )
     ))
-with tab4:
-    # st.subheader("Detailed Analysis")
-# else:
+# with tab4:
+#     st.subheader("Detailed Analysis")
+else:
     charts = plotly_target_achievement_allcharts(
         dataframe=progress,
         date_config={"ReportingDate": "Reporting Period"},
