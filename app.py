@@ -376,7 +376,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 #     horizontal=True,
 # )
 with tab1:
-    st.subheader("Overview"):
+    st.subheader("Overview")
 # if section == "Overview":
     safe_section("Target vs Achievement", lambda: safe_plotly(
         plotly_achievement_target_dropdown(
