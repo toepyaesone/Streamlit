@@ -524,8 +524,8 @@ elif section == "Primary Healthcare":
     with c1:
         safe_section("Primary Healthcare Distribution", lambda: safe_plotly(
             plotly_scatter_bubble(
-                df=filtered_df, x_col="PrimaryHealthcare", yaxis="Case",
-                chartTitle="Primary Healthcare Among Examined Cases", exclude_blank=True,
+                df=filtered_df, x_col="PrimaryHealthcare", yaxis="Approach",
+                chartTitle="Primary Healthcare Distribution", exclude_blank=False,
             )
         ))
     with c2:
@@ -533,13 +533,13 @@ elif section == "Primary Healthcare":
             plot_nested_donut_chart(filtered_df, column_name="PrimaryHealthcare")
         ))
 
-    safe_section("Primary Healthcare Consultation", lambda: safe_plotly(
+    safe_section("Primary Healthcare Among Examined Cases", lambda: safe_plotly(
         plot_scatter_sunburst(
             df=filtered_df,
             x_col="PrimaryHealthcare",
-            yaxis="Approach",
-            main_title="Primary Healthcare Consultation",
-            exclude_blank=False,
+            yaxis="Case",
+            main_title="Primary Healthcare Among Examined Cases",
+            exclude_blank=True,
         )
     ))
 
