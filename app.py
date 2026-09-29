@@ -361,7 +361,8 @@ def kpi_card(title, value, achievement_pct, target):
 
 k1, k2, k3, k4 = st.columns(4)
 
-kpi_card("Total Attendant",total_attendant,0,0)
+# kpi_card("Total Attendant",total_attendant,0,0)
+k1.metric("Total Attendant", f"{total_attendant:,}")
 kpi_card("Examined Cases",presumptive_count,pct(presumptive_count, presumptive_target),presumptive_target)
 kpi_card("Notified Cases",notified_count,pct(notified_count, notified_target),notified_target)
 kpi_card("BC Cases",bc_count,pct(bc_count, bc_target),bc_target)
