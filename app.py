@@ -307,87 +307,45 @@ presumptive_target = float(progress.get("Examined Cases Target", pd.Series(dtype
 notified_target = float(progress.get("Notified Cases Target", pd.Series(dtype=float)).sum())
 bc_target = float(progress.get("BC Cases Target", pd.Series(dtype=float)).sum())
 
+# ---------- KPI ACHIEVEMENT ----------
+def achievement_pct(actual, target):
+    if target is None or target == 0:
+        return 0.0
+    return (actual / target) * 100
 
-def pct(n, d):
-    return f"{(n / d * 100):.0f}%" if d > 0 else "N/A"
 
-def achievement_delta(achievement_pct, target):
-    if achievement_pct >= 100:
-        return f"↑ {achievement_pct:.1f}% of {target:,.0f}", "normal"
+def achievement_text(actual, target):
+    ach = achievement_pct(actual, target)
+
+    if ach >= 100:
+        return f"↑ {ach:.1f}% of {target:,.0f}", "green"
     else:
-        return f"↓ {achievement_pct:.1f}% of {target:,.0f}", "inverse"
+        return f"↓ {ach:.1f}% of {target:,.0f}", "red"
+
 
 k1, k2, k3, k4 = st.columns(4)
 
-examined_pct = pct(presumptive_count, presumptive_target)
-notified_pct = pct(notified_count, notified_target)
-bc_pct = pct(bc_count, bc_target)
+with k1:
+    st.metric("Total Attendant",f"{total_attendant:,}")
 
-examined_delta, examined_color = achievement_delta(examined_pct, presumptive_target)
-notified_delta, notified_color = achievement_delta(notified_pct, notified_target)
-bc_delta, bc_color = achievement_delta(bc_pct, bc_target)
+with k2:
+    st.metric("Examined Cases",f"{presumptive_count:,}")
+    text, color = achievement_text(presumptive_count,presumptive_target)
+    st.markdown(f"<span style='color:{color}; font-weight:600;'>{text}</span>",unsafe_allow_html=True)
 
-k1.metric("Total Attendant",f"{total_attendant:,}")
-k2.metric("Examined Cases",f"{presumptive_count:,}",examined_delta,delta_color=examined_color)
-k3.metric("Notified Cases",f"{notified_count:,}",notified_delta,delta_color=notified_color)
-k4.metric("BC Cases",f"{bc_count:,}",bc_delta,delta_color=bc_color)
+with k3:
+    st.metric("Notified Cases",f"{notified_count:,}")
+    text, color = achievement_text(notified_count,notified_target)
+    st.markdown(f"<span style='color:{color}; font-weight:600;'>{text}</span>",unsafe_allow_html=True)
 
-
-# def achievement_display(achievement_pct, target):
-#     if achievement_pct >= 100:
-#         return f"↑ {achievement_pct:.1f}% of {target:,.0f}", "green"
-#     else:
-#         return f"↓ {achievement_pct:.1f}% of {target:,.0f}", "red"
-
-# def kpi_card(title, value, achievement_pct, target):
-#     if achievement_pct >= 100:
-#         arrow = "↑"
-#         color = "#16a34a"   # green
-#     else:
-#         arrow = "↓"
-#         color = "#dc2626"   # red
-
-#     st.markdown(
-#         f"""
-#         <div style="
-#             border: 1px solid #e5e7eb;
-#             border-radius: 10px;
-#             padding: 12px 16px;
-#             background: white;
-#         ">
-#             <div style="font-size: 14px; color: #6b7280;">
-#                 {title}
-#             </div>
-
-#             <div style="
-#                 font-size: 28px;
-#                 font-weight: 600;
-#                 margin-top: 4px;
-#             ">
-#                 {value:,}
-#             </div>
-
-#             <div style="
-#                 font-size: 14px;
-#                 font-weight: 600;
-#                 color: {color};
-#                 margin-top: 4px;
-#             ">
-#                 {arrow} {achievement_pct:.1f}% of {target:,.0f}
-#             </div>
-#         </div>
-#         """,
-#         unsafe_allow_html=True
-#     )
+with k4:
+    st.metric("BC Cases",f"{bc_count:,}")
+    text, color = achievement_text(bc_count,bc_target)
+    st.markdown(f"<span style='color:{color}; font-weight:600;'>{text}</span>",unsafe_allow_html=True)
 
 
-# k1, k2, k3, k4 = st.columns(4)
-
-# kpi_card("Total Attendant",total_attendant,0,0)
-# kpi_card("Examined Cases",presumptive_count,pct(presumptive_count, presumptive_target),presumptive_target)
-# kpi_card("Notified Cases",notified_count,pct(notified_count, notified_target),notified_target)
-# kpi_card("BC Cases",bc_count,pct(bc_count, bc_target),bc_target)
-
+# def pct(n, d):
+#     return f"{(n / d * 100):.0f}%" if d > 0 else "N/A"
 # k1, k2, k3, k4 = st.columns(4)
 # k1.metric("Total Attendant", f"{total_attendant:,}")
 # k2.metric("Examined Cases", f"{presumptive_count:,}", f"{pct(presumptive_count, presumptive_target)} of {presumptive_target:,.0f}")
