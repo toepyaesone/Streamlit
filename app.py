@@ -353,7 +353,7 @@ with k4:
 # k4.metric("BC Cases", f"{bc_count:,}", f"{pct(bc_count, bc_target)} of {bc_target:,.0f}")
 
 st.caption(
-    f"Selected period: {date_from:%d %b %Y} – {date_to:%d %b %Y} | "
+    f"SELECTED PERIOD: From {date_from:%d %b %Y} To {date_to:%d %b %Y} | "
     f"Records: {len(filtered_df):,}"
 )
 
@@ -361,13 +361,23 @@ st.caption(
 # Render only the selected section. This is substantially lighter than rerendering
 # every chart on every Streamlit interaction.
 # -----------------------------------------------------------------------------
-section = st.radio(
-    "Dashboard section",
-    ["Overview", "TB Care Cascade", "Primary Healthcare", "Detailed Analysis"],
-    horizontal=True,
-)
 
-if section == "Overview":
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📊 Overview",
+    "🫁 TB Care Cascade",
+    "🏥 Primary Healthcare",
+    "🔎 Detailed Analysis"
+])
+
+# section = st.radio(
+#     "Dashboard section",
+#     ["Overview", "TB Care Cascade", "Primary Healthcare", "Detailed Analysis"],
+#     horizontal=True,
+# )
+with tab1:
+    st.subheader("Overview"):
+# if section == "Overview":
     safe_section("Target vs Achievement", lambda: safe_plotly(
         plotly_achievement_target_dropdown(
             dataframe=progress,
@@ -434,7 +444,9 @@ if section == "Overview":
         plotly_gender_agegroup(filtered_df, "Sex", "Age", 500)
     ))
 
-elif section == "TB Care Cascade":
+with tab2:
+    st.subheader("TB Care Cascade")
+# elif section == "TB Care Cascade":
     df_tb = filtered_df[filtered_df["Case"] == "TB"].copy()
     df_tb["HIVStatus"] = df_tb["HIVStatus"].replace({"P": "Positive", "N": "Negative", "Y": "Positive", "U": "Unknown", "": "Unknown"})
     df_tb["DM1"] = df_tb["DM1"].replace({"No DM": "DM - No", "DM-New": "DM - Yes", "DM-Old": "DM - Yes", "": "Unknown"})
@@ -518,8 +530,9 @@ elif section == "TB Care Cascade":
                     chart_title="DOTS Provision",
                 )
             ))
-
-elif section == "Primary Healthcare":
+with tab3:
+    st.subheader("Primary Healthcare")
+# elif section == "Primary Healthcare":
     c1, c2 = st.columns(2)
     with c1:
         safe_section("Primary Healthcare Distribution", lambda: safe_plotly(
@@ -554,8 +567,9 @@ elif section == "Primary Healthcare":
             title="Average Consultation Per Day",
         )
     ))
-
-else:
+with tab4:
+    st.subheader("Detailed Analysis")
+# else:
     charts = plotly_target_achievement_allcharts(
         dataframe=progress,
         date_config={"ReportingDate": "Reporting Period"},
