@@ -535,7 +535,7 @@ elif section == "🫁 Tuberculosis":
 elif section == "🏥 Primary Healthcare":
     c1, c2 = st.columns(2)
     with c1:
-        safe_section("Primary Healthcare Distribution", lambda: safe_plotly(
+        safe_section("Primary Healthcare Consultation", lambda: safe_plotly(
             plotly_scatter_bubble(
                 df=filtered_df, x_col="PrimaryHealthcare", yaxis="Approach",
                 chartTitle="Primary Healthcare Consultation", exclude_blank=False,
