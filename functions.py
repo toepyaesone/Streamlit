@@ -2490,8 +2490,8 @@ def plot_scatter_sunburst(df: pd.DataFrame,x_col: str = "PrimaryHealthcare", yax
       rows=1,
       cols=2,
       subplot_titles=(
-          f"Category Distribution by {yaxis}",
-          "Category & Comorbidity Breakdown",
+          f"PHC Consultation by Examined {yaxis}",
+          f"Category & Comorbidity Among Examined {yaxis}",
       ),
       specs=[[{"type": "xy"}, {"type": "sunburst"}]],
       horizontal_spacing=0.12,
