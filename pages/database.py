@@ -404,6 +404,7 @@ def pending_changes_count():
 #         .execute()
 #     )
 #     return pd.DataFrame(response.data or [])
+
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_table_data(table_name: str) -> pd.DataFrame:
 
@@ -823,61 +824,61 @@ with tabs[1]:
 
         return query
 
-try:
+    try:
 
-    df = fetch_all_from_query(
-        build_editor_query,
-        batch_size=BATCH_SIZE,
-    )
-
-except Exception as exc:
-
-    st.error(
-        f"Error loading data: {exc}"
-    )
-
-    df = pd.DataFrame()
-
-
-    if not df.empty:
-        st.caption(
-                    f"Showing all {len(df):,} matching record(s). "
-                    f"Data was loaded in {BATCH_SIZE:,}-row batches."
-                )
-
-        disabled_cols = [
-            column for column in [primary_key, "updated_at"]
-            if column in df.columns
-        ]
-
-        editor_key = f"consultation_grid_{st.session_state.grid_version}"
-
-        # Keep a stable source snapshot for comparison.
-        st.session_state.editor_source_df = df.copy()
-
-        edited_df = st.data_editor(
-            df,
-            key=editor_key,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="dynamic" if can_add else "fixed",
-            disabled=disabled_cols,
+        df = fetch_all_from_query(
+            build_editor_query,
+            batch_size=BATCH_SIZE,
         )
 
-        st.session_state.editor_df = edited_df.copy()
+    except Exception as exc:
 
-        # Capture only differences from the current source snapshot.
-        if can_edit:
-            capture_editor_changes(
-                st.session_state.editor_source_df,
-                edited_df,
-                primary_key,
+        st.error(
+            f"Error loading data: {exc}"
+        )
+
+        df = pd.DataFrame()
+
+
+        if not df.empty:
+            st.caption(
+                        f"Showing all {len(df):,} matching record(s). "
+                        f"Data was loaded in {BATCH_SIZE:,}-row batches."
+                    )
+
+            disabled_cols = [
+                column for column in [primary_key, "updated_at"]
+                if column in df.columns
+            ]
+
+            editor_key = f"consultation_grid_{st.session_state.grid_version}"
+
+            # Keep a stable source snapshot for comparison.
+            st.session_state.editor_source_df = df.copy()
+
+            edited_df = st.data_editor(
+                df,
+                key=editor_key,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="dynamic" if can_add else "fixed",
+                disabled=disabled_cols,
             )
-        elif not edited_df.equals(df):
-            st.warning("Your role is read-only; edits will not be synchronized.")
 
-    else:
-        st.info("No records found for the active filters.")
+            st.session_state.editor_df = edited_df.copy()
+
+            # Capture only differences from the current source snapshot.
+            if can_edit:
+                capture_editor_changes(
+                    st.session_state.editor_source_df,
+                    edited_df,
+                    primary_key,
+                )
+            elif not edited_df.equals(df):
+                st.warning("Your role is read-only; edits will not be synchronized.")
+
+        else:
+            st.info("No records found for the active filters.")
 
     # ========================================================
     # Pending changes
