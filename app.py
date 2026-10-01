@@ -1,7 +1,7 @@
 import streamlit as st
 
 st.set_page_config(
-    page_title="YgnTBPro System",
+    page_title="Yangon TB Project",
     page_icon="🫁",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -9,13 +9,13 @@ st.set_page_config(
 
 dashboard_page = st.Page(
     "pages/dashboard.py",
-    title="Dashboard",
+    title="DASHBOARD",
     icon="📊",
     default=True,
 )
 database_page = st.Page(
     "pages/database.py",
-    title="Database Explorer",
+    title="DATABASE",
     icon="💾",
 )
 
