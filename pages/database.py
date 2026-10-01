@@ -688,14 +688,13 @@ def load_database():
 
     client = get_user_client()
 
-    response = (
-        client
-        .table(TABLE_NAME)
-        .select("*")
-        .limit(MAX_ROWS)
-        .execute()
-    )
+   #response = (client.table(TABLE_NAME).select("*").limit(MAX_ROWS).execute())
 
+    query = supabase.table(TABLE_NAME).select("*")
+    if MAX_ROWS:
+        query = query.limit(MAX_ROWS)
+    response = query.execute()
+    
     df = pd.DataFrame(
         response.data or []
     )
