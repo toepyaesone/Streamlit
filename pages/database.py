@@ -101,6 +101,8 @@ if "user_email" not in st.session_state:
 
 def login_user(email: str, password: str):
     try:
+        email = email.strip().lower()
+
         response = base_supabase.auth.sign_in_with_password(
             {
                 "email": email,
@@ -109,8 +111,13 @@ def login_user(email: str, password: str):
         )
 
         if response.user:
+
+            authenticated_email = (
+                response.user.email or email
+            ).strip().lower()
+
             st.session_state.authenticated = True
-            st.session_state.user_email = response.user.email
+            st.session_state.user_email = authenticated_email
             st.session_state.user_id = response.user.id
 
             return True, None
@@ -195,16 +202,22 @@ client = get_user_client()
 
 def get_user_role(
     supabase_client: Client,
-    user_id: str,
+    user_email: str,
 ) -> str:
+    """
+    Get the application role from the user_role table
+    using the authenticated user's email.
+    """
+
+    if not user_email:
+        return "viewer"
 
     try:
-
         response = (
             supabase_client
-            .table("user_roles")
+            .table("user_role")
             .select("role")
-            .eq("user_id", user_id)
+            .eq("email", user_email.strip().lower())
             .limit(1)
             .execute()
         )
@@ -212,24 +225,47 @@ def get_user_role(
         rows = response.data or []
 
         if rows:
-            return str(rows[0].get("role", "viewer")).lower()
+            role_value = rows[0].get("role")
+
+            if role_value:
+                role_value = str(role_value).strip().lower()
+
+                # Only allow known application roles
+                if role_value in {
+                    "viewer",
+                    "editor",
+                    "admin",
+                }:
+                    return role_value
 
     except Exception as e:
         st.warning(
             f"Could not read user role: {e}"
         )
 
+    # Safe default
     return "viewer"
 
 
-user_id = st.session_state.get("user_id")
+# ------------------------------------------------------------
+# Get role using the authenticated login email
+# ------------------------------------------------------------
+
+user_email = (
+    st.session_state.get("user_email")
+)
 
 role = get_user_role(
     client,
-    user_id,
+    user_email,
 )
 
 st.session_state.role = role
+
+
+# ------------------------------------------------------------
+# Permissions
+# ------------------------------------------------------------
 
 can_edit = role in {
     "editor",
