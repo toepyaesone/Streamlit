@@ -8,7 +8,6 @@ import os
 import math
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -41,6 +40,11 @@ st.set_page_config(
 
 TABLE_NAME = "ygntbpro"
 
+# Supabase/PostgREST request batch size.
+#
+# IMPORTANT:
+# This is NOT the maximum number of records in the
+# application. It is only the size of each server request.
 BATCH_SIZE = 1000
 
 EDITOR_PAGE_SIZE_DEFAULT = 300
@@ -56,6 +60,10 @@ EXPLORER_DISPLAY_LIMIT = 1000
 
 CSV_BATCH_SIZE = 1000
 
+
+# ============================================================
+# COLUMN CANDIDATES
+# ============================================================
 
 PRIMARY_KEY_CANDIDATES = [
     "PatientID",
@@ -79,9 +87,10 @@ UPDATED_AT_CANDIDATES = [
 # FILTER TYPES
 # ============================================================
 
-# These are PostgreSQL numeric columns.
+# IMPORTANT:
+# PostgreSQL ILIKE cannot be used against integer columns.
 #
-# NEVER use ilike() on these columns.
+# These filters therefore use exact .eq() matching.
 NUMERIC_FILTERS = {
     "team",
     "visit_no",
@@ -89,6 +98,7 @@ NUMERIC_FILTERS = {
 }
 
 
+# These filters use ILIKE.
 TEXT_FILTERS = {
     "tsp",
     "approach",
@@ -112,8 +122,13 @@ DEFAULTS = {
 
     "editor_source_df": None,
 
+    # Primary-key -> changed columns
     "pending_updates": {},
+
+    # List of new records
     "pending_inserts": [],
+
+    # Set of primary-key values
     "pending_deletes": set(),
 
     "grid_version": 0,
@@ -146,37 +161,47 @@ def get_secret(
     then environment variables.
 
     Always return a normal Python string.
+
+    This is important because some newer versions of
+    httpx/supabase can expose URLs as URL objects.
     """
 
     value = None
 
     try:
+
         if name in st.secrets:
+
             value = st.secrets[name]
+
     except Exception:
+
         value = None
 
     if value is None:
 
-        value = os.getenv(name)
+        value = os.getenv(
+            name
+        )
 
     if value is None:
 
         return default
 
     # --------------------------------------------------------
-    # IMPORTANT FIX
-    #
-    # Some libraries may return URL-like objects.
-    # Explicitly convert to plain str.
+    # IMPORTANT URL FIX
     # --------------------------------------------------------
 
-    return str(value).strip()
+    return str(
+        value
+    ).strip()
 
 
 def get_supabase_config():
     """
-    Return Supabase URL and key as plain strings.
+    Get Supabase URL and key.
+
+    Supports both project-specific and generic secret names.
     """
 
     url = get_secret(
@@ -200,11 +225,16 @@ def get_supabase_config():
         )
 
     # --------------------------------------------------------
-    # IMPORTANT FIX
+    # IMPORTANT URL FIX
     # --------------------------------------------------------
 
-    url = str(url).strip()
-    key = str(key).strip()
+    url = str(
+        url
+    ).strip()
+
+    key = str(
+        key
+    ).strip()
 
     if not url:
 
@@ -218,7 +248,10 @@ def get_supabase_config():
             "SUPABASE_KEY_ygntbpro is missing."
         )
 
-    return url, key
+    return (
+        url,
+        key,
+    )
 
 
 # ============================================================
@@ -228,9 +261,11 @@ def get_supabase_config():
 @st.cache_resource
 def get_base_client() -> Client:
 
-    url, key = get_supabase_config()
+    url, key = (
+        get_supabase_config()
+    )
 
-    # Explicitly force normal strings.
+    # Explicitly convert to plain strings.
     url = str(url)
     key = str(key)
 
@@ -246,14 +281,16 @@ def get_base_client() -> Client:
 
 def get_user_client() -> Client:
     """
-    Create an authenticated Supabase client for the current user.
+    Create a Supabase client authenticated as the
+    currently logged-in user.
 
-    IMPORTANT:
-    Every RLS-sensitive database operation uses this client.
+    All RLS-sensitive operations should use this client.
     """
 
-    session = st.session_state.get(
-        "session"
+    session = (
+        st.session_state.get(
+            "session"
+        )
     )
 
     if session is None:
@@ -263,23 +300,33 @@ def get_user_client() -> Client:
         )
 
     # --------------------------------------------------------
-    # Get the original URL/key directly.
+    # IMPORTANT:
     #
     # Do NOT use:
     #
     #     base_client.supabase_url
     #
-    # because newer Supabase/httpx versions can expose this
-    # as a URL object rather than a plain string.
+    # because in some library versions this can be an
+    # httpx.URL object.
+    #
+    # Read the original configuration and explicitly
+    # convert it to str.
     # --------------------------------------------------------
 
-    url, key = get_supabase_config()
+    url, key = (
+        get_supabase_config()
+    )
 
-    url = str(url).strip()
-    key = str(key).strip()
+    url = str(
+        url
+    ).strip()
+
+    key = str(
+        key
+    ).strip()
 
     # --------------------------------------------------------
-    # IMPORTANT FIX
+    # Create a completely new client.
     # --------------------------------------------------------
 
     user_client = create_client(
@@ -316,33 +363,37 @@ def get_user_client() -> Client:
         ).strip()
 
     # --------------------------------------------------------
-    # Set authenticated session
+    # Authenticate the PostgREST client.
     # --------------------------------------------------------
 
-    try:
+    authenticated = False
 
-        if refresh_token:
+    # Preferred method.
+    if refresh_token:
+
+        try:
 
             user_client.auth.set_session(
                 access_token,
                 refresh_token,
             )
 
-        else:
+            authenticated = True
 
-            user_client.postgrest.auth(
-                access_token
-            )
+        except Exception:
 
-    except Exception:
+            authenticated = False
 
-        # Fallback for compatibility with different
-        # supabase-py versions.
+    # Fallback for different supabase-py versions.
+    if not authenticated:
+
         try:
 
             user_client.postgrest.auth(
                 access_token
             )
+
+            authenticated = True
 
         except Exception as exc:
 
@@ -363,20 +414,16 @@ def login_user(
     password: str,
 ):
     """
-    Login using Supabase Auth.
+    Authenticate with Supabase Auth.
 
-    Role is retrieved by authenticated user UUID.
+    Role is retrieved by user UUID from user_roles.
     """
 
     try:
 
-        # ----------------------------------------------------
-        # IMPORTANT:
-        # Do not call get_user_client() until the session
-        # has successfully been stored.
-        # ----------------------------------------------------
-
-        base_supabase = get_base_client()
+        base_supabase = (
+            get_base_client()
+        )
 
         email = str(
             email
@@ -385,6 +432,10 @@ def login_user(
         password = str(
             password
         )
+
+        # ----------------------------------------------------
+        # Supabase authentication
+        # ----------------------------------------------------
 
         response = (
             base_supabase
@@ -401,12 +452,11 @@ def login_user(
 
             return (
                 False,
-                "Login failed: "
-                "no authenticated session was returned.",
+                "Login failed: no authenticated session was returned.",
             )
 
         # ----------------------------------------------------
-        # Save authenticated session first.
+        # Save session FIRST.
         # ----------------------------------------------------
 
         st.session_state.session = (
@@ -414,18 +464,25 @@ def login_user(
         )
 
         # ----------------------------------------------------
-        # Create authenticated client.
+        # Now create authenticated client.
         # ----------------------------------------------------
 
-        user_client = get_user_client()
+        user_client = (
+            get_user_client()
+        )
 
         # ----------------------------------------------------
         # IMPORTANT:
-        # Role is determined using Supabase Auth user UUID,
-        # NOT email.
+        #
+        # Role is looked up by Supabase Auth user UUID,
+        # NOT by email.
         # ----------------------------------------------------
 
-        user_id = response.session.user.id
+        user_id = (
+            response.session
+            .user
+            .id
+        )
 
         role_result = (
             user_client
@@ -442,7 +499,8 @@ def login_user(
         if role_result.data:
 
             role = (
-                role_result.data[0]
+                role_result
+                .data[0]
                 .get(
                     "role",
                     "viewer",
@@ -465,7 +523,9 @@ def login_user(
 
             role = "viewer"
 
-        st.session_state.user_role = role
+        st.session_state.user_role = (
+            role
+        )
 
         return (
             True,
@@ -474,8 +534,7 @@ def login_user(
 
     except Exception as exc:
 
-        # If login/authentication failed, don't leave
-        # a partially authenticated session.
+        # Clear partial authentication state.
         st.session_state.session = None
         st.session_state.user_role = None
 
@@ -493,7 +552,9 @@ def logout_user():
 
     try:
 
-        base_supabase = get_base_client()
+        base_supabase = (
+            get_base_client()
+        )
 
         base_supabase.auth.sign_out()
 
@@ -555,9 +616,11 @@ if not st.session_state.session:
 
         else:
 
-            success, message = login_user(
-                email,
-                password,
+            success, message = (
+                login_user(
+                    email,
+                    password,
+                )
             )
 
             if success:
@@ -578,7 +641,7 @@ if not st.session_state.session:
 
 
 # ============================================================
-# USER ROLE
+# USER ROLE / PERMISSIONS
 # ============================================================
 
 user_role = (
@@ -636,6 +699,7 @@ def resolve_column(
     for candidate in candidates:
 
         if candidate is None:
+
             continue
 
         actual = lookup.get(
@@ -703,7 +767,9 @@ def values_equal(
 
     try:
 
-        result = left == right
+        result = (
+            left == right
+        )
 
         if isinstance(
             result,
@@ -732,7 +798,9 @@ def clean_value(
 
         return None
 
-    if is_null_like(value):
+    if is_null_like(
+        value
+    ):
 
         return None
 
@@ -750,10 +818,9 @@ def clean_value(
         np.floating,
     ):
 
-        if np.isnan(
-            value
-        ) or np.isinf(
-            value
+        if (
+            np.isnan(value)
+            or np.isinf(value)
         ):
 
             return None
@@ -816,7 +883,8 @@ def make_json_safe(
             str(key): make_json_safe(
                 val
             )
-            for key, val in value.items()
+            for key, val
+            in value.items()
         }
 
     if isinstance(
@@ -832,7 +900,8 @@ def make_json_safe(
             make_json_safe(
                 item
             )
-            for item in value
+            for item
+            in value
         ]
 
     if isinstance(
@@ -849,10 +918,9 @@ def make_json_safe(
         np.floating,
     ):
 
-        if np.isnan(
-            value
-        ) or np.isinf(
-            value
+        if (
+            np.isnan(value)
+            or np.isinf(value)
         ):
 
             return None
@@ -933,7 +1001,9 @@ def clean_record(
 
 def get_table_columns():
 
-    client = get_base_client()
+    # Use authenticated client so that schema/sample retrieval
+    # follows the current user's RLS permissions.
+    client = get_user_client()
 
     response = (
         client
@@ -963,80 +1033,101 @@ def resolve_database_columns(
 
     return {
 
-        "primary_key": resolve_column(
-            columns,
-            *PRIMARY_KEY_CANDIDATES,
-        ),
+        "primary_key":
+            resolve_column(
+                columns,
+                *PRIMARY_KEY_CANDIDATES,
+            ),
 
-        "date": resolve_column(
-            columns,
-            *DATE_COLUMN_CANDIDATES,
-        ),
+        "date":
+            resolve_column(
+                columns,
+                *DATE_COLUMN_CANDIDATES,
+            ),
 
-        "updated_at": resolve_column(
-            columns,
-            *UPDATED_AT_CANDIDATES,
-        ),
+        "updated_at":
+            resolve_column(
+                columns,
+                *UPDATED_AT_CANDIDATES,
+            ),
 
-        "team": resolve_column(
-            columns,
-            "team",
-            "Team",
-        ),
+        "team":
+            resolve_column(
+                columns,
+                "team",
+                "Team",
+            ),
 
-        "tsp": resolve_column(
-            columns,
-            "tsp",
-            "Tsp",
-            "TSP",
-        ),
+        "tsp":
+            resolve_column(
+                columns,
+                "tsp",
+                "Tsp",
+                "TSP",
+            ),
 
-        "approach": resolve_column(
-            columns,
-            "approach",
-            "Approach",
-        ),
+        "approach":
+            resolve_column(
+                columns,
+                "approach",
+                "Approach",
+            ),
 
-        "case": resolve_column(
-            columns,
-            "case",
-            "Case",
-        ),
+        "case":
+            resolve_column(
+                columns,
+                "case",
+                "Case",
+            ),
 
-        "visit_no": resolve_column(
-            columns,
-            "visit_no",
-            "Visit_no",
-            "visitno",
-            "VisitNo",
-        ),
+        "visit_no":
+            resolve_column(
+                columns,
+                "visit_no",
+                "Visit_no",
+                "visitno",
+                "VisitNo",
+            ),
 
-        "sr_no": resolve_column(
-            columns,
-            "sr_no",
-            "Sr_No",
-            "srno",
-            "SrNo",
-        ),
+        "sr_no":
+            resolve_column(
+                columns,
+                "sr_no",
+                "Sr_No",
+                "srno",
+                "SrNo",
+            ),
 
-        "ward_village": resolve_column(
-            columns,
-            "ward_village",
-            "WardVillage",
-            "Ward_Village",
-            "wardvillage",
-        ),
+        "ward_village":
+            resolve_column(
+                columns,
+                "ward_village",
+                "WardVillage",
+                "Ward_Village",
+                "wardvillage",
+            ),
     }
 
 
 # ============================================================
-# PAGINATION
+# PAGINATED FETCH
 # ============================================================
 
 def fetch_all_from_query(
     query_builder,
     batch_size=BATCH_SIZE,
 ):
+    """
+    Fetch all rows using repeated PostgREST range requests.
+
+    There is no 1,000-row application limit.
+
+    Example:
+        0-999
+        1000-1999
+        2000-2999
+        ...
+    """
 
     rows = []
 
@@ -1143,6 +1234,23 @@ def apply_editor_filter(
     value,
     filter_name,
 ):
+    """
+    Apply a filter using the correct PostgreSQL operator.
+
+    Numeric:
+        Team
+        Visit No
+        SR No
+
+    Text:
+        TSP
+        Approach
+        Case
+        Ward/Village
+
+    PatientID:
+        exact match
+    """
 
     if not column:
 
@@ -1161,20 +1269,21 @@ def apply_editor_filter(
         return query
 
     # --------------------------------------------------------
-    # PatientID
+    # Patient ID
     # --------------------------------------------------------
 
     if filter_name == "patient_id":
 
-        # Exact matching.
-        # This works for text or numeric PK values.
         return query.eq(
             column,
             value,
         )
 
     # --------------------------------------------------------
-    # Numeric filters
+    # Numeric columns
+    #
+    # IMPORTANT FIX:
+    # Do NOT use ilike() here.
     # --------------------------------------------------------
 
     if filter_name in NUMERIC_FILTERS:
@@ -1185,9 +1294,15 @@ def apply_editor_filter(
             )
         )
 
+        # Invalid numeric input:
+        # return no matching records rather than generating
+        # an invalid PostgreSQL query.
         if numeric_value is None:
 
-            return query
+            return query.eq(
+                column,
+                -999999999,
+            )
 
         return query.eq(
             column,
@@ -1195,7 +1310,7 @@ def apply_editor_filter(
         )
 
     # --------------------------------------------------------
-    # Text filters
+    # Text columns
     # --------------------------------------------------------
 
     if filter_name in TEXT_FILTERS:
@@ -1231,86 +1346,67 @@ def build_editor_query(
         .select("*")
     )
 
+    # --------------------------------------------------------
+    # Filters
+    # --------------------------------------------------------
+
     mapping = {
 
-        "patient_id": (
+        "patient_id":
             db_columns.get(
                 "primary_key"
             ),
-        ),
 
-        "team": (
+        "team":
             db_columns.get(
                 "team"
             ),
-        ),
 
-        "tsp": (
+        "tsp":
             db_columns.get(
                 "tsp"
             ),
-        ),
 
-        "approach": (
+        "approach":
             db_columns.get(
                 "approach"
             ),
-        ),
 
-        "case": (
+        "case":
             db_columns.get(
                 "case"
             ),
-        ),
 
-        "visit_no": (
+        "visit_no":
             db_columns.get(
                 "visit_no"
             ),
-        ),
 
-        "sr_no": (
+        "sr_no":
             db_columns.get(
                 "sr_no"
             ),
-        ),
 
-        "ward_village": (
+        "ward_village":
             db_columns.get(
                 "ward_village"
             ),
-        ),
     }
 
-    for filter_name, candidates in mapping.items():
-
-        column = None
-
-        for candidate in candidates:
-
-            if candidate:
-
-                column = resolve_column(
-                    columns,
-                    candidate,
-                )
-
-                if column:
-
-                    break
+    for filter_name, column in mapping.items():
 
         query = apply_editor_filter(
-            query,
-            column,
-            filters.get(
+            query=query,
+            column=column,
+            value=filters.get(
                 filter_name,
                 "",
             ),
-            filter_name,
+            filter_name=filter_name,
         )
 
     # --------------------------------------------------------
-    # Date
+    # Date range
     # --------------------------------------------------------
 
     date_column = db_columns.get(
@@ -1336,6 +1432,7 @@ def build_editor_query(
 
         if date_to:
 
+            # Use < next day rather than <= 23:59:59.
             next_day = (
                 date_to
                 + pd.Timedelta(
@@ -1349,7 +1446,7 @@ def build_editor_query(
             )
 
     # --------------------------------------------------------
-    # Stable order
+    # Stable ordering
     # --------------------------------------------------------
 
     primary_key = db_columns.get(
@@ -1378,36 +1475,26 @@ def load_editor_page(
     page,
     page_size,
 ):
+    """
+    Load one editor page.
 
-    # --------------------------------------------------------
-    # Count
-    # --------------------------------------------------------
+    IMPORTANT:
+    Does NOT use:
+        select(count="exact")
 
-    count_query = build_editor_query(
-        client,
-        columns,
-        db_columns,
-        filters,
-    )
+    This avoids compatibility problems with older
+    supabase-py/PostgREST versions.
 
-    count_response = (
-        count_query
-        .select(
-            "*",
-            count="exact",
-        )
-        .execute()
-    )
+    Instead, request one extra row.
 
-    total_count = (
-        count_response.count
-        if count_response.count is not None
-        else 0
-    )
+    Example:
+        page size = 300
 
-    # --------------------------------------------------------
-    # Data
-    # --------------------------------------------------------
+        request = 301 rows
+
+        301 rows returned -> Next page exists
+        <=300 rows       -> Last page
+    """
 
     query = build_editor_query(
         client,
@@ -1418,14 +1505,13 @@ def load_editor_page(
 
     start = max(
         0,
-        (page - 1)
-        * page_size,
+        (page - 1) * page_size,
     )
 
+    # Request one additional record.
     end = (
         start
         + page_size
-        - 1
     )
 
     response = (
@@ -1442,9 +1528,40 @@ def load_editor_page(
         or []
     )
 
+    has_next_page = (
+        len(rows) > page_size
+    )
+
+    if has_next_page:
+
+        rows = rows[
+            :page_size
+        ]
+
+    df = pd.DataFrame(
+        rows
+    )
+
+    # This is only a display/navigation estimate.
+    # It is NOT an exact database count.
+    if has_next_page:
+
+        records_loaded = (
+            start
+            + page_size
+        )
+
+    else:
+
+        records_loaded = (
+            start
+            + len(rows)
+        )
+
     return (
-        pd.DataFrame(rows),
-        total_count,
+        df,
+        records_loaded,
+        has_next_page,
     )
 
 
@@ -1465,7 +1582,10 @@ def add_pending_update(
         primary_id
     )
 
-    if key not in st.session_state.pending_updates:
+    if key not in (
+        st.session_state
+        .pending_updates
+    ):
 
         st.session_state.pending_updates[
             key
@@ -1477,6 +1597,8 @@ def add_pending_update(
         changes
     )
 
+    # If user edits a record after marking it for deletion,
+    # cancel the pending deletion.
     st.session_state.pending_deletes.discard(
         key
     )
@@ -1500,6 +1622,14 @@ def capture_grid_changes(
     edited_df,
     primary_key,
 ):
+    """
+    Compare the current grid against its database snapshot.
+
+    IMPORTANT:
+    Missing rows are NOT considered deleted.
+
+    Deletion must be explicit through Delete Selected.
+    """
 
     if source_df is None:
 
@@ -1565,9 +1695,9 @@ def capture_grid_changes(
 
             continue
 
-        source_row = source_rows[
-            key
-        ]
+        source_row = (
+            source_rows[key]
+        )
 
         changes = {}
 
@@ -1594,8 +1724,10 @@ def capture_grid_changes(
                 new_value,
             ):
 
-                changes[column] = clean_value(
-                    new_value
+                changes[column] = (
+                    clean_value(
+                        new_value
+                    )
                 )
 
         if changes:
@@ -1610,15 +1742,18 @@ def pending_changes_count():
 
     return (
         len(
-            st.session_state.pending_updates
+            st.session_state
+            .pending_updates
         )
         +
         len(
-            st.session_state.pending_inserts
+            st.session_state
+            .pending_inserts
         )
         +
         len(
-            st.session_state.pending_deletes
+            st.session_state
+            .pending_deletes
         )
     )
 
@@ -1673,6 +1808,12 @@ def merge_pending_changes_into_page(
     df,
     primary_key,
 ):
+    """
+    Overlay pending changes on the currently loaded page.
+
+    This makes pending changes remain visible when the
+    user navigates between pages or changes filters.
+    """
 
     if df is None:
 
@@ -1766,8 +1907,9 @@ def build_grid_options(
     editable,
 ):
 
-    gb = GridOptionsBuilder.from_dataframe(
-        df
+    gb = (
+        GridOptionsBuilder
+        .from_dataframe(df)
     )
 
     gb.configure_default_column(
@@ -1796,6 +1938,10 @@ def build_grid_options(
             editable=False,
         )
 
+    # --------------------------------------------------------
+    # Selection only for Admin.
+    # --------------------------------------------------------
+
     if can_delete:
 
         gb.configure_selection(
@@ -1815,7 +1961,7 @@ def build_grid_options(
 
 
 # ============================================================
-# EXPLORER
+# EXPLORER QUERY
 # ============================================================
 
 def build_explorer_query(
@@ -1858,9 +2004,17 @@ def build_explorer_query(
 
         # ----------------------------------------------------
         # IMPORTANT:
-        # Only TEXT columns are included in global search.
         #
-        # Do NOT search Team/VisitNo/SRNo using ILIKE.
+        # Only text columns are included in global keyword
+        # search.
+        #
+        # We deliberately do NOT call:
+        #
+        #     Team.ilike(...)
+        #     VisitNo.ilike(...)
+        #     SRNo.ilike(...)
+        #
+        # because those may be INTEGER columns.
         # ----------------------------------------------------
 
         text_columns = []
@@ -1872,8 +2026,10 @@ def build_explorer_query(
             "ward_village",
         ]:
 
-            column = db_columns.get(
-                name
+            column = (
+                db_columns.get(
+                    name
+                )
             )
 
             if (
@@ -1888,8 +2044,12 @@ def build_explorer_query(
         if text_columns:
 
             expressions = [
-                f"{column}.ilike.%{safe_keyword}%"
-                for column in text_columns
+                (
+                    f"{column}.ilike."
+                    f"%{safe_keyword}%"
+                )
+                for column
+                in text_columns
             ]
 
             query = query.or_(
@@ -1898,8 +2058,10 @@ def build_explorer_query(
                 )
             )
 
-    primary_key = db_columns.get(
-        "primary_key"
+    primary_key = (
+        db_columns.get(
+            "primary_key"
+        )
     )
 
     if primary_key:
@@ -1911,6 +2073,10 @@ def build_explorer_query(
 
     return query
 
+
+# ============================================================
+# EXPLORER CSV EXPORT
+# ============================================================
 
 def export_filtered_csv(
     client,
@@ -1925,12 +2091,14 @@ def export_filtered_csv(
         end,
     ):
 
-        query = build_explorer_query(
-            client,
-            columns,
-            db_columns,
-            keyword,
-            selected_columns,
+        query = (
+            build_explorer_query(
+                client,
+                columns,
+                db_columns,
+                keyword,
+                selected_columns,
+            )
         )
 
         return query.range(
@@ -1959,26 +2127,30 @@ def export_filtered_csv(
 
 
 # ============================================================
-# SYNC
+# SYNCHRONIZATION
 # ============================================================
 
 def sync_pending_changes(
     client,
     primary_key,
 ):
+    """
+    Synchronize pending UPDATE / INSERT / DELETE operations.
+
+    Failed operations remain pending.
+    """
 
     update_errors = []
     insert_errors = []
     delete_errors = []
 
     successful_updates = []
+    successful_inserts = []
     successful_deletes = []
 
-    remaining_inserts = []
-
-    # --------------------------------------------------------
+    # ========================================================
     # UPDATE
-    # --------------------------------------------------------
+    # ========================================================
 
     for (
         primary_id,
@@ -2026,9 +2198,11 @@ def sync_pending_changes(
                 f"UPDATE {primary_id}: {exc}"
             )
 
-    # --------------------------------------------------------
+    # ========================================================
     # INSERT
-    # --------------------------------------------------------
+    # ========================================================
+
+    remaining_inserts = []
 
     for record in list(
         st.session_state
@@ -2052,19 +2226,23 @@ def sync_pending_changes(
                 .execute()
             )
 
+            successful_inserts.append(
+                record
+            )
+
         except Exception as exc:
 
             insert_errors.append(
-                f"INSERT: {exc}"
+                f"INSERT {record.get(primary_key, '')}: {exc}"
             )
 
             remaining_inserts.append(
                 record
             )
 
-    # --------------------------------------------------------
+    # ========================================================
     # DELETE
-    # --------------------------------------------------------
+    # ========================================================
 
     for primary_id in list(
         st.session_state
@@ -2096,9 +2274,9 @@ def sync_pending_changes(
                 f"DELETE {primary_id}: {exc}"
             )
 
-    # --------------------------------------------------------
-    # Remove successful updates
-    # --------------------------------------------------------
+    # ========================================================
+    # Remove successful UPDATE operations
+    # ========================================================
 
     for primary_id in successful_updates:
 
@@ -2107,17 +2285,17 @@ def sync_pending_changes(
             None,
         )
 
-    # --------------------------------------------------------
-    # Keep failed inserts
-    # --------------------------------------------------------
+    # ========================================================
+    # Keep failed INSERT operations
+    # ========================================================
 
     st.session_state.pending_inserts = (
         remaining_inserts
     )
 
-    # --------------------------------------------------------
-    # Remove successful deletes
-    # --------------------------------------------------------
+    # ========================================================
+    # Remove successful DELETE operations
+    # ========================================================
 
     for primary_id in successful_deletes:
 
@@ -2125,27 +2303,29 @@ def sync_pending_changes(
             primary_id
         )
 
-    errors = (
-        update_errors
-        + insert_errors
-        + delete_errors
-    )
-
     return {
-        "successful_updates": len(
-            successful_updates
-        ),
-        "successful_inserts": (
+
+        "successful_updates":
             len(
-                st.session_state
-                .pending_inserts
-            )
-            # This is corrected below using initial count.
-        ),
-        "successful_deletes": len(
-            successful_deletes
-        ),
-        "errors": errors,
+                successful_updates
+            ),
+
+        "successful_inserts":
+            len(
+                successful_inserts
+            ),
+
+        "successful_deletes":
+            len(
+                successful_deletes
+            ),
+
+        "errors":
+            (
+                update_errors
+                + insert_errors
+                + delete_errors
+            ),
     }
 
 
@@ -2178,14 +2358,17 @@ with header_col2:
 
 
 # ============================================================
-# INITIALIZE DATABASE
+# DATABASE INITIALIZATION
 # ============================================================
 
 try:
 
+    # Authenticated client.
     client = get_user_client()
 
-    columns = get_table_columns()
+    columns = (
+        get_table_columns()
+    )
 
     if not columns:
 
@@ -2272,12 +2455,12 @@ with tab_editor:
         )
 
     # ========================================================
-    # FILTER RESET
+    # FILTER RESET CALLBACK
     # ========================================================
 
     def reset_editor_filters():
 
-        keys = [
+        filter_keys = [
             "filter_patient_id",
             "filter_team",
             "filter_tsp",
@@ -2288,7 +2471,7 @@ with tab_editor:
             "filter_ward_village",
         ]
 
-        for key in keys:
+        for key in filter_keys:
 
             st.session_state[key] = ""
 
@@ -2304,12 +2487,14 @@ with tab_editor:
 
         st.session_state.editor_page = 1
 
-        st.session_state.editor_loaded = False
+        st.session_state.editor_loaded = True
 
         st.session_state.filter_version += 1
 
         # IMPORTANT:
-        # Pending changes are NOT cleared.
+        #
+        # Pending UPDATE / INSERT / DELETE changes
+        # are intentionally NOT cleared.
 
     # ========================================================
     # FILTERS
@@ -2320,70 +2505,92 @@ with tab_editor:
         expanded=True,
     ):
 
-        row1 = st.columns(4)
+        row1 = st.columns(
+            4
+        )
 
         with row1[0]:
 
-            patient_id_filter = st.text_input(
-                "Patient ID",
-                key="filter_patient_id",
+            patient_id_filter = (
+                st.text_input(
+                    "Patient ID",
+                    key="filter_patient_id",
+                )
             )
 
         with row1[1]:
 
-            team_filter = st.text_input(
-                "Team",
-                key="filter_team",
-                help="Exact numeric match.",
+            team_filter = (
+                st.text_input(
+                    "Team",
+                    key="filter_team",
+                    help="Exact numeric match.",
+                )
             )
 
         with row1[2]:
 
-            tsp_filter = st.text_input(
-                "TSP",
-                key="filter_tsp",
+            tsp_filter = (
+                st.text_input(
+                    "TSP",
+                    key="filter_tsp",
+                )
             )
 
         with row1[3]:
 
-            approach_filter = st.text_input(
-                "Approach",
-                key="filter_approach",
+            approach_filter = (
+                st.text_input(
+                    "Approach",
+                    key="filter_approach",
+                )
             )
 
-        row2 = st.columns(4)
+        row2 = st.columns(
+            4
+        )
 
         with row2[0]:
 
-            case_filter = st.text_input(
-                "Case",
-                key="filter_case",
+            case_filter = (
+                st.text_input(
+                    "Case",
+                    key="filter_case",
+                )
             )
 
         with row2[1]:
 
-            visit_no_filter = st.text_input(
-                "Visit No",
-                key="filter_visit_no",
-                help="Exact numeric match.",
+            visit_no_filter = (
+                st.text_input(
+                    "Visit No",
+                    key="filter_visit_no",
+                    help="Exact numeric match.",
+                )
             )
 
         with row2[2]:
 
-            sr_no_filter = st.text_input(
-                "SR No",
-                key="filter_sr_no",
-                help="Exact numeric match.",
+            sr_no_filter = (
+                st.text_input(
+                    "SR No",
+                    key="filter_sr_no",
+                    help="Exact numeric match.",
+                )
             )
 
         with row2[3]:
 
-            ward_village_filter = st.text_input(
-                "Ward / Village",
-                key="filter_ward_village",
+            ward_village_filter = (
+                st.text_input(
+                    "Ward / Village",
+                    key="filter_ward_village",
+                )
             )
 
-        row3 = st.columns(3)
+        row3 = st.columns(
+            3
+        )
 
         with row3[0]:
 
@@ -2495,11 +2702,17 @@ with tab_editor:
 
         st.session_state.editor_loaded = True
 
-        # Do NOT clear pending changes.
+        # Reset only the database snapshot.
+        #
+        # Pending changes remain untouched.
         st.session_state.editor_source_df = None
 
+        st.session_state.filter_version += 1
+
+        st.rerun()
+
     # ========================================================
-    # INITIAL LOAD
+    # INITIAL FILTER STATE
     # ========================================================
 
     if not st.session_state.editor_loaded:
@@ -2521,7 +2734,7 @@ with tab_editor:
         st.session_state.editor_loaded = True
 
     # ========================================================
-    # LOAD RECORDS
+    # LOAD CURRENT PAGE
     # ========================================================
 
     try:
@@ -2541,28 +2754,36 @@ with tab_editor:
             .editor_filters
         )
 
-        df, total_count = (
-            load_editor_page(
-                client,
-                columns,
-                db_columns,
-                filters,
-                current_page,
-                current_page_size,
-            )
+        (
+            df,
+            records_loaded,
+            has_next_page,
+        ) = load_editor_page(
+            client,
+            columns,
+            db_columns,
+            filters,
+            current_page,
+            current_page_size,
         )
+
+        # ----------------------------------------------------
+        # Keep database snapshot WITHOUT pending changes.
+        # ----------------------------------------------------
+
+        st.session_state.editor_source_df = (
+            df.copy()
+        )
+
+        # ----------------------------------------------------
+        # Overlay pending updates/deletes for display.
+        # ----------------------------------------------------
 
         display_df = (
             merge_pending_changes_into_page(
                 df,
                 primary_key,
             )
-        )
-
-        # Snapshot is the actual database data,
-        # not the pending-overlay version.
-        st.session_state.editor_source_df = (
-            df.copy()
         )
 
     except Exception as exc:
@@ -2577,34 +2798,50 @@ with tab_editor:
     # PAGE INFORMATION
     # ========================================================
 
-    total_pages = max(
-        1,
-        math.ceil(
-            total_count
-            / current_page_size
-        ),
-    )
-
     info1, info2, info3 = st.columns(
         3
     )
 
     with info1:
 
+        if has_next_page:
+
+            record_text = (
+                f"{records_loaded:,}+"
+            )
+
+        else:
+
+            record_text = (
+                f"{records_loaded:,}"
+            )
+
         st.metric(
-            "Database Records",
-            f"{total_count:,}",
+            "Records Loaded",
+            record_text,
         )
 
     with info2:
 
+        page_text = (
+            f"Page **{current_page}**"
+        )
+
+        if has_next_page:
+
+            page_text += " / more"
+
+        else:
+
+            page_text += " / last"
+
         st.write(
-            f"Page **{current_page} / "
-            f"{total_pages}**"
+            page_text
         )
 
         st.caption(
-            f"Showing {len(display_df):,} records"
+            f"Showing {len(display_df):,} "
+            "records on this page"
         )
 
     with info3:
@@ -2714,12 +2951,12 @@ with tab_editor:
     # ACTION BUTTONS
     # ========================================================
 
-    action1, action2, action3, action4 = st.columns(
-        4
+    action1, action2, action3, action4 = (
+        st.columns(4)
     )
 
     # --------------------------------------------------------
-    # Delete
+    # DELETE
     # --------------------------------------------------------
 
     with action1:
@@ -2783,7 +3020,7 @@ with tab_editor:
             )
 
     # --------------------------------------------------------
-    # Add
+    # ADD
     # --------------------------------------------------------
 
     with action2:
@@ -2810,7 +3047,7 @@ with tab_editor:
             )
 
     # --------------------------------------------------------
-    # Previous
+    # PREVIOUS
     # --------------------------------------------------------
 
     with action3:
@@ -2832,16 +3069,14 @@ with tab_editor:
             st.rerun()
 
     # --------------------------------------------------------
-    # Next
+    # NEXT
     # --------------------------------------------------------
 
     with action4:
 
         if st.button(
             "Next ➡️",
-            disabled=(
-                current_page >= total_pages
-            ),
+            disabled=not has_next_page,
             use_container_width=True,
         ):
 
@@ -2854,7 +3089,7 @@ with tab_editor:
             st.rerun()
 
     # ========================================================
-    # ADD NEW RECORD
+    # ADD NEW RECORD FORM
     # ========================================================
 
     if (
@@ -2897,17 +3132,21 @@ with tab_editor:
                         )
                     )
 
-            submit_new = st.form_submit_button(
-                "Add to Pending Changes",
-                type="primary",
-                use_container_width=True,
+            submit_new = (
+                st.form_submit_button(
+                    "Add to Pending Changes",
+                    type="primary",
+                    use_container_width=True,
+                )
             )
 
         if submit_new:
 
             record = {}
 
-            for column, value in add_values.items():
+            for column, value in (
+                add_values.items()
+            ):
 
                 value = str(
                     value
@@ -2927,12 +3166,23 @@ with tab_editor:
 
             else:
 
+                # ------------------------------------------------
                 # Convert known numeric fields.
-                for column in [
-                    db_columns.get("team"),
-                    db_columns.get("visit_no"),
-                    db_columns.get("sr_no"),
-                ]:
+                # ------------------------------------------------
+
+                numeric_columns = [
+                    db_columns.get(
+                        "team"
+                    ),
+                    db_columns.get(
+                        "visit_no"
+                    ),
+                    db_columns.get(
+                        "sr_no"
+                    ),
+                ]
+
+                for column in numeric_columns:
 
                     if (
                         column
@@ -3013,7 +3263,7 @@ with tab_editor:
             )
 
         # ----------------------------------------------------
-        # Updates
+        # UPDATE PREVIEW
         # ----------------------------------------------------
 
         if (
@@ -3036,7 +3286,10 @@ with tab_editor:
                 .items()
             ):
 
-                for column, value in changes.items():
+                for (
+                    column,
+                    value,
+                ) in changes.items():
 
                     update_preview.append(
                         {
@@ -3060,7 +3313,7 @@ with tab_editor:
             )
 
         # ----------------------------------------------------
-        # Inserts
+        # INSERT PREVIEW
         # ----------------------------------------------------
 
         if (
@@ -3082,7 +3335,7 @@ with tab_editor:
             )
 
         # ----------------------------------------------------
-        # Deletes
+        # DELETE PREVIEW
         # ----------------------------------------------------
 
         if (
@@ -3095,18 +3348,20 @@ with tab_editor:
             )
 
             st.write(
-                list(
-                    st.session_state
-                    .pending_deletes
+                sorted(
+                    list(
+                        st.session_state
+                        .pending_deletes
+                    )
                 )
             )
 
         # ----------------------------------------------------
-        # Sync / Discard
+        # SYNC / DISCARD
         # ----------------------------------------------------
 
-        sync_col, discard_col = st.columns(
-            2
+        sync_col, discard_col = (
+            st.columns(2)
         )
 
         with sync_col:
@@ -3124,6 +3379,10 @@ with tab_editor:
                 use_container_width=True,
             )
 
+        # ----------------------------------------------------
+        # DISCARD
+        # ----------------------------------------------------
+
         if discard_clicked:
 
             clear_pending_changes()
@@ -3136,87 +3395,77 @@ with tab_editor:
 
             st.rerun()
 
+        # ----------------------------------------------------
+        # SYNC
+        # ----------------------------------------------------
+
         if sync_clicked:
 
-            # Capture counts before synchronization.
-            update_count_before = len(
-                st.session_state
-                .pending_updates
-            )
-
-            insert_count_before = len(
-                st.session_state
-                .pending_inserts
-            )
-
-            delete_count_before = len(
-                st.session_state
-                .pending_deletes
-            )
-
-            with st.spinner(
-                "Synchronizing changes..."
+            if not (
+                st.session_state.pending_updates
+                or st.session_state.pending_inserts
+                or st.session_state.pending_deletes
             ):
 
-                result = (
-                    sync_pending_changes(
-                        client,
-                        primary_key,
-                    )
+                st.info(
+                    "There are no pending changes."
                 )
-
-            # Calculate successful inserts from
-            # before/after counts.
-            successful_inserts = (
-                insert_count_before
-                - len(
-                    st.session_state
-                    .pending_inserts
-                )
-            )
-
-            if result["errors"]:
-
-                st.error(
-                    "Some changes could not be synchronized."
-                )
-
-                for error in result["errors"]:
-
-                    st.error(
-                        error
-                    )
 
             else:
 
-                st.success(
-                    "All pending changes synchronized successfully."
+                with st.spinner(
+                    "Synchronizing changes..."
+                ):
+
+                    result = (
+                        sync_pending_changes(
+                            client,
+                            primary_key,
+                        )
+                    )
+
+                if result["errors"]:
+
+                    st.error(
+                        "Some changes could not be synchronized."
+                    )
+
+                    for error in result["errors"]:
+
+                        st.error(
+                            error
+                        )
+
+                else:
+
+                    st.success(
+                        "All pending changes synchronized successfully."
+                    )
+
+                st.info(
+                    " | ".join(
+                        [
+                            (
+                                "Updated: "
+                                f"{result['successful_updates']}"
+                            ),
+                            (
+                                "Inserted: "
+                                f"{result['successful_inserts']}"
+                            ),
+                            (
+                                "Deleted: "
+                                f"{result['successful_deletes']}"
+                            ),
+                        ]
+                    )
                 )
 
-            st.info(
-                " | ".join(
-                    [
-                        (
-                            "Updated: "
-                            f"{result['successful_updates']}"
-                        ),
-                        (
-                            "Inserted: "
-                            f"{successful_inserts}"
-                        ),
-                        (
-                            "Deleted: "
-                            f"{result['successful_deletes']}"
-                        ),
-                    ]
-                )
-            )
+                st.session_state.editor_source_df = None
 
-            st.session_state.editor_source_df = None
+                st.session_state.grid_version += 1
 
-            st.session_state.grid_version += 1
-
-            st.rerun()
+                st.rerun()
 
 
 # ============================================================
@@ -3230,8 +3479,10 @@ with tab_explorer:
     )
 
     st.caption(
-        "Global keyword search covers text fields "
-        "such as TSP, Approach, Case and Ward/Village."
+        "Global keyword search covers text fields such as "
+        "TSP, Approach, Case and Ward/Village. "
+        "Numeric fields are intentionally excluded from "
+        "global ILIKE search."
     )
 
     col1, col2 = st.columns(
@@ -3240,21 +3491,25 @@ with tab_explorer:
 
     with col1:
 
-        explorer_keyword = st.text_input(
-            "Keyword",
-            key="explorer_keyword",
-            placeholder=(
-                "Search text columns..."
-            ),
+        explorer_keyword = (
+            st.text_input(
+                "Keyword",
+                key="explorer_keyword",
+                placeholder=(
+                    "Search text columns..."
+                ),
+            )
         )
 
     with col2:
 
-        explorer_columns = st.multiselect(
-            "Columns",
-            options=columns,
-            default=[],
-            key="explorer_columns",
+        explorer_columns = (
+            st.multiselect(
+                "Columns",
+                options=columns,
+                default=[],
+                key="explorer_columns",
+            )
         )
 
     b1, b2 = st.columns(
@@ -3276,20 +3531,22 @@ with tab_explorer:
             use_container_width=True,
         )
 
-    # --------------------------------------------------------
-    # Search
-    # --------------------------------------------------------
+    # ========================================================
+    # EXPLORER SEARCH
+    # ========================================================
 
     if load_explorer:
 
         try:
 
-            query = build_explorer_query(
-                client,
-                columns,
-                db_columns,
-                explorer_keyword,
-                explorer_columns,
+            query = (
+                build_explorer_query(
+                    client,
+                    columns,
+                    db_columns,
+                    explorer_keyword,
+                    explorer_columns,
+                )
             )
 
             response = (
@@ -3306,10 +3563,14 @@ with tab_explorer:
                 or []
             )
 
-            st.session_state.explorer_loaded = True
+            st.session_state.explorer_loaded = (
+                True
+            )
 
             st.session_state.explorer_result = (
-                pd.DataFrame(rows)
+                pd.DataFrame(
+                    rows
+                )
             )
 
         except Exception as exc:
@@ -3318,9 +3579,9 @@ with tab_explorer:
                 f"Unable to search Explorer: {exc}"
             )
 
-    # --------------------------------------------------------
-    # CSV
-    # --------------------------------------------------------
+    # ========================================================
+    # CSV EXPORT
+    # ========================================================
 
     if export_csv:
 
@@ -3364,9 +3625,9 @@ with tab_explorer:
                 f"Unable to export CSV: {exc}"
             )
 
-    # --------------------------------------------------------
-    # Display Explorer result
-    # --------------------------------------------------------
+    # ========================================================
+    # EXPLORER RESULT
+    # ========================================================
 
     if st.session_state.explorer_loaded:
 
@@ -3394,6 +3655,10 @@ with tab_explorer:
                 height=600,
                 hide_index=True,
             )
+
+            # ------------------------------------------------
+            # DATA INFORMATION
+            # ------------------------------------------------
 
             with st.expander(
                 "📊 Data Information"
