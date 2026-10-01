@@ -1,6 +1,6 @@
+# BACKUP: This file is a backup of the original `pages/database.py` file.
 import os
 from datetime import timedelta
-
 import pandas as pd
 import streamlit as st
 from supabase import Client, create_client
