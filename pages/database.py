@@ -1037,7 +1037,7 @@ with tabs[1]:
         "Team": resolve_column(columns, "team", "Team"),
         "TSP": resolve_column(columns, "tsp", "Tsp", "TSP"),
         "Approach": resolve_column(columns, "approach", "Approach"),
-        "Clinic": resolve_column(columns, "epi11", "EPI11"),
+        "Case": resolve_column(columns, "case", "Case"),
     }
 
     if not primary_key:
