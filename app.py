@@ -332,13 +332,30 @@ def classify_symptomatic(df: pd.DataFrame, symptom_cols, target_vals=("yes", "1"
     return pd.Series("Asymptomatic", index=df.index).mask(is_symptomatic, "Symptomatic")
 
 
+# @st.cache_data(ttl=900, show_spinner=False)
+# def load_table(table_name: str) -> pd.DataFrame:
+#     df = functionGetDataFromTable(table_name, SUPABASE_URL, SUPABASE_KEY, page_size=1000)
+#     if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+#         raise RuntimeError(f"Could not retrieve standard records for '{table_name}' from Supabase.")
+#     return df
+
 @st.cache_data(ttl=900, show_spinner=False)
 def load_table(table_name: str) -> pd.DataFrame:
-    df = functionGetDataFromTable(table_name, SUPABASE_URL, SUPABASE_KEY, page_size=1000)
-    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
-        raise RuntimeError(f"Could not retrieve standard records for '{table_name}' from Supabase.")
+    try:
+        df = functionGetDataFromTable(table_name, SUPABASE_URL, SUPABASE_KEY, page_size=1000)
+    except Exception as err:
+        raise RuntimeError(f"Error executing functionGetDataFromTable('{table_name}'): {err}")
+        
+    if df is None:
+        raise RuntimeError(
+            f"Could not retrieve '{table_name}' from Supabase. "
+            f"Check if table exists, RLS policies allow SELECT, or credentials are valid.\n"
+            f"URL Used: {SUPABASE_URL[:25]}..."
+        )
+    if isinstance(df, pd.DataFrame) and df.empty:
+        raise RuntimeError(f"Table '{table_name}' was retrieved successfully but contains 0 records.")
+        
     return df
-
 
 @st.cache_data(ttl=900, show_spinner=False)
 def prepare_data(raw_dashboard: pd.DataFrame, raw_target: pd.DataFrame):
