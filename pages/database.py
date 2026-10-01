@@ -1074,13 +1074,22 @@ with tabs[1]:
                 )
 
     with col3:
-        actual_year = filter_columns["Reporting Year"]
-        if actual_year:
-            filter_values[actual_year] = st.multiselect(
-                "Reporting Year",
-                get_unique_values(TABLE_NAME, actual_year),
-                key=f"filter_year_{fv}",
-            )
+        # actual_year = filter_columns["Reporting Year"]
+        # if actual_year:
+        #     filter_values[actual_year] = st.multiselect(
+        #         "Reporting Year",
+        #         get_unique_values(TABLE_NAME, actual_year),
+        #         key=f"filter_year_{fv}",
+        #     )
+
+        for label in ["Case"]:
+            actual = filter_columns[label]
+            if actual:
+                filter_values[actual] = st.multiselect(
+                    label,
+                    get_unique_values(TABLE_NAME, actual),
+                    key=f"filter_{label}_{fv}",
+                )
 
         date_from = st.date_input("Date From", value=None, key=f"date_from_{fv}")
         date_to = st.date_input("Date To", value=None, key=f"date_to_{fv}")
