@@ -37,7 +37,7 @@ SUPABASE_KEY = st.secrets.get(
 )
 
 TABLE_NAME = "ygntbpro"
-MAX_ROWS = None
+# MAX_ROWS = None
 
 
 if not SUPABASE_URL or not SUPABASE_KEY:
@@ -684,22 +684,33 @@ def pending_changes_count():
 # Load database
 # ============================================================
 
-def load_database():
+def load_all_rows(client, table_name, batch_size=1000):
+    """Load all rows from Supabase in batches."""
+    all_rows = []
+    start = 0
 
-    client = get_user_client()
+    while True:
+        response = (
+            client
+            .table(table_name)
+            .select("*")
+            .range(start, start + batch_size - 1)
+            .execute()
+        )
 
-   #response = (client.table(TABLE_NAME).select("*").limit(MAX_ROWS).execute())
+        rows = response.data or []
 
-    query = client.table(TABLE_NAME).select("*")
-    if MAX_ROWS:
-        query = query.limit(MAX_ROWS)
-    response = query.execute()
-    
-    df = pd.DataFrame(
-        response.data or []
-    )
+        if not rows:
+            break
 
-    return normalize_dataframe(df)
+        all_rows.extend(rows)
+
+        if len(rows) < batch_size:
+            break
+
+        start += batch_size
+
+    return pd.DataFrame(all_rows)
 
 
 # ============================================================
@@ -1209,9 +1220,7 @@ with editor_tab:
 
             try:
 
-                st.session_state.db_df = (
-                    load_database()
-                )
+                st.session_state.db_df = load_all_rows(supabase,TABLE_NAME,batch_size=1000)
 
             except Exception as exc:
 
@@ -1222,7 +1231,7 @@ with editor_tab:
                 st.stop()
 
     db_df = st.session_state.db_df
-
+    st.caption(f"Loaded {len(db_df):,} rows from {TABLE_NAME}")
     # --------------------------------------------------------
     # Header/status
     # --------------------------------------------------------
