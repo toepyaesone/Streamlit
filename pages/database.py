@@ -2173,17 +2173,17 @@ def load_all_explorer_data():
     )
 
 
-def explorer_previous_page():
+# def explorer_previous_page():
 
-    st.session_state.explorer_page = max(
-        1,
-        st.session_state.explorer_page - 1,
-    )
+#     st.session_state.explorer_page = max(
+#         1,
+#         st.session_state.explorer_page - 1,
+#     )
 
 
-def explorer_next_page():
+# def explorer_next_page():
 
-    st.session_state.explorer_page += 1
+#     st.session_state.explorer_page += 1
 
 
 def filter_explorer_locally(
@@ -2665,48 +2665,92 @@ with tab_editor:
 
         st.markdown("")
 
-        p1, p2, p3 = st.columns(
-            [1, 1, 4]
-        )
+        # p1, p2, p3 = st.columns(
+        #     [1, 1, 4]
+        # )
+
+        # with p1:
+
+        #     st.button(
+        #         "← Previous",
+        #         disabled=(
+        #             st.session_state.editor_page
+        #             <= 1
+        #         ),
+        #         use_container_width=True,
+        #         on_click=editor_previous_page,
+        #     )
+
+        # with p2:
+
+        #     st.button(
+        #         "Next →",
+        #         disabled=not has_next,
+        #         use_container_width=True,
+        #         on_click=editor_next_page,
+        #     )
+
+        # with p3:
+
+        #     if has_next:
+
+        #         st.caption(
+        #             f"Page "
+        #             f"{st.session_state.editor_page:,}"
+        #             " — more records available"
+        #         )
+
+        #     else:
+
+        #         st.caption(
+        #             f"Page "
+        #             f"{st.session_state.editor_page:,}"
+        #             " — last page"
+        #         )
+
+        p1, p2, p3 = st.columns([1, 1, 4])
 
         with p1:
 
-            st.button(
+            previous_clicked = st.button(
                 "← Previous",
                 disabled=(
-                    st.session_state.editor_page
-                    <= 1
+                    st.session_state.editor_page <= 1
                 ),
                 use_container_width=True,
-                on_click=editor_previous_page,
+                key="editor_previous_button",
             )
 
         with p2:
 
-            st.button(
+            next_clicked = st.button(
                 "Next →",
                 disabled=not has_next,
                 use_container_width=True,
-                on_click=editor_next_page,
+                key="editor_next_button",
             )
 
         with p3:
 
-            if has_next:
+            st.caption(
+                f"Page {st.session_state.editor_page:,}"
+            )
 
-                st.caption(
-                    f"Page "
-                    f"{st.session_state.editor_page:,}"
-                    " — more records available"
-                )
+        if previous_clicked and st.session_state.editor_page > 1:
 
-            else:
+            st.session_state.editor_page -= 1
+            st.session_state.editor_source_df = None
+            st.session_state.editor_source_key = None
+            st.session_state.grid_version += 1
+            st.rerun()
 
-                st.caption(
-                    f"Page "
-                    f"{st.session_state.editor_page:,}"
-                    " — last page"
-                )
+        if next_clicked and has_next:
+
+            st.session_state.editor_page += 1
+            st.session_state.editor_source_df = None
+            st.session_state.editor_source_key = None
+            st.session_state.grid_version += 1
+            st.rerun()
 
     # ========================================================
     # ADD RECORD
@@ -3203,33 +3247,37 @@ with tab_explorer:
 
         with p1:
 
-            st.button(
+            previous_clicked = st.button(
                 "← Previous",
-                disabled=(
-                    page <= 1
-                ),
+                disabled=(page <= 1),
                 use_container_width=True,
-                on_click=(
-                    explorer_previous_page
-                ),
+                key="explorer_previous_button",
             )
 
         with p2:
 
-            st.button(
+            next_clicked = st.button(
                 "Next →",
-                disabled=(
-                    page >= total_pages
-                ),
+                disabled=(page >= total_pages),
                 use_container_width=True,
-                on_click=(
-                    explorer_next_page
-                ),
+                key="explorer_next_button",
             )
 
         with p3:
 
             st.caption(
-                f"Page {page:,} of "
-                f"{total_pages:,}"
+                f"Page {page:,} of {total_pages:,}"
             )
+
+        # Change page AFTER the widgets have been created.
+        # This avoids Streamlit widget-state conflicts.
+
+        if previous_clicked and page > 1:
+
+            st.session_state.explorer_page = page - 1
+            st.rerun()
+
+        if next_clicked and page < total_pages:
+
+            st.session_state.explorer_page = page + 1
+            st.rerun()
