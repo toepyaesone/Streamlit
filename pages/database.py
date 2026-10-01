@@ -1031,13 +1031,13 @@ with tabs[1]:
     primary_key = resolve_column(columns, "PatientID", "patientid", "patient_id")
     date_column = resolve_column(columns, "Date", "date")
     filter_columns = {
-        "Visit No": resolve_column(columns, "visitno", "VisitNo"),
-        "SR No": resolve_column(columns, "srno", "SRNo"),
+        "Visit No": resolve_column(columns, "visitno", "Visit_no"),
+        "SR No": resolve_column(columns, "srno", "Sr_No"),
         "Patient ID": primary_key,
         "Team": resolve_column(columns, "team", "Team"),
         "TSP": resolve_column(columns, "tsp", "Tsp", "TSP"),
         "Approach": resolve_column(columns, "approach", "Approach"),
-        "Reporting Year": resolve_column(columns, "reportingyear", "ReportingYear"),
+        "Clinic": resolve_column(columns, "epi11", "EPI11"),
     }
 
     if not primary_key:
