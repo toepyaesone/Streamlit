@@ -22,7 +22,7 @@ from st_aggrid import (
 # ============================================================
 
 TABLE_NAME = "ygntbpro"
-PRIMARY_KEY = "patientID"
+PRIMARY_KEY = "PatientID"
 BATCH_SIZE = 1000
 
 SUPABASE_URL_ygntbpro = "https://kocihpxevlowqbguhstf.supabase.co"
