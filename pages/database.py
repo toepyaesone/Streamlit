@@ -26,7 +26,8 @@ SUPABASE_KEY = st.secrets.get(
 
 TABLE_NAME = "ygntbpro"
 TARGET_TABLE = "target"
-MAX_ROWS = 1000
+# MAX_ROWS = 1000
+BATCH_SIZE = 1000
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     st.error(
@@ -381,48 +382,148 @@ def pending_changes_count():
     )
 
 
+# @st.cache_data(ttl=600, show_spinner=False)
+# def fetch_table_data(table_name: str) -> pd.DataFrame:
+#     if functionGetDataFromTable:
+#         try:
+#             df = functionGetDataFromTable(
+#                 table_name,
+#                 SUPABASE_URL,
+#                 SUPABASE_KEY,
+#                 page_size=MAX_ROWS,
+#             )
+#             if isinstance(df, pd.DataFrame):
+#                 return df
+#         except Exception:
+#             pass
+
+#     response = (
+#         base_supabase.table(table_name)
+#         .select("*")
+#         .limit(MAX_ROWS)
+#         .execute()
+#     )
+#     return pd.DataFrame(response.data or [])
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_table_data(table_name: str) -> pd.DataFrame:
-    if functionGetDataFromTable:
-        try:
-            df = functionGetDataFromTable(
-                table_name,
-                SUPABASE_URL,
-                SUPABASE_KEY,
-                page_size=MAX_ROWS,
-            )
-            if isinstance(df, pd.DataFrame):
-                return df
-        except Exception:
-            pass
 
-    response = (
-        base_supabase.table(table_name)
-        .select("*")
-        .limit(MAX_ROWS)
-        .execute()
-    )
-    return pd.DataFrame(response.data or [])
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def get_unique_values(table_name: str, column: str):
-    try:
-        result = (
-            base_supabase.table(table_name)
-            .select(column)
-            .limit(10000)
+    rows = []
+    start = 0
+    while True:
+        end = start + BATCH_SIZE - 1
+        response = (
+            base_supabase
+            .table(table_name)
+            .select("*")
+            .range(start, end)
             .execute()
         )
-        values = {
-            str(row[column]).strip()
-            for row in (result.data or [])
-            if row.get(column) is not None and str(row[column]).strip()
-        }
-        return sorted(values, key=str.lower)
-    except Exception:
-        return []
+        batch = response.data or []
+        if not batch:
+            break
+        rows.extend(batch)
+        # Last batch reached.
+        if len(batch) < BATCH_SIZE:
+            break
+        start += BATCH_SIZE
 
+    return pd.DataFrame(rows)
+
+def fetch_all_from_query(query_builder, batch_size=BATCH_SIZE):
+
+    rows = []
+    start = 0
+    while True:
+        end = start + batch_size - 1
+        response = (
+            query_builder(start, end)
+            .execute()
+        )
+        batch = response.data or []
+        if not batch:
+            break
+        rows.extend(batch)
+        if len(batch) < batch_size:
+            break
+        start += batch_size
+
+    return pd.DataFrame(rows)
+
+
+# @st.cache_data(ttl=60, show_spinner=False)
+# def get_unique_values(table_name: str, column: str):
+#     try:
+#         result = (
+#             base_supabase.table(table_name)
+#             .select(column)
+#             .limit(10000)
+#             .execute()
+#         )
+#         values = {
+#             str(row[column]).strip()
+#             for row in (result.data or [])
+#             if row.get(column) is not None and str(row[column]).strip()
+#         }
+#         return sorted(values, key=str.lower)
+#     except Exception:
+#         return []
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_unique_values(
+    table_name: str,
+    column: str,
+):
+    """
+    Get ALL unique values from a column using pagination.
+    """
+
+    values = set()
+
+    start = 0
+
+    while True:
+
+        end = (
+            start
+            + BATCH_SIZE
+            - 1
+        )
+
+        response = (
+            base_supabase
+            .table(table_name)
+            .select(column)
+            .range(start, end)
+            .execute()
+        )
+
+        batch = response.data or []
+
+        if not batch:
+            break
+
+        for row in batch:
+
+            value = row.get(column)
+
+            if (
+                value is not None
+                and str(value).strip()
+            ):
+
+                values.add(
+                    str(value).strip()
+                )
+
+        if len(batch) < BATCH_SIZE:
+            break
+
+        start += BATCH_SIZE
+
+    return sorted(
+        values,
+        key=str.lower,
+    )
 
 def clear_pending_changes():
     st.session_state.pending_updates = {}
@@ -619,14 +720,6 @@ with tabs[1]:
                 )
 
     with col3:
-        # actual_year = filter_columns["Reporting Year"]
-        # if actual_year:
-        #     filter_values[actual_year] = st.multiselect(
-        #         "Reporting Year",
-        #         get_unique_values(TABLE_NAME, actual_year),
-        #         key=f"filter_year_{fv}",
-        #     )
-
         for label in ["Case"]:
             actual = filter_columns[label]
             if actual:
@@ -651,36 +744,106 @@ with tabs[1]:
         st.rerun()
 
     # Query using the authenticated client so RLS policies are respected.
+    # client = get_user_client()
+    # query = client.table(TABLE_NAME).select("*")
+
+    # for column, values in filter_values.items():
+    #     if values:
+    #         query = query.in_(column, values)
+
+    # if date_column and date_from:
+    #     query = query.gte(date_column, date_from.isoformat())
+
+    # if date_column and date_to:
+    #     next_day = date_to + timedelta(days=1)
+    #     query = query.lt(date_column, next_day.isoformat())
+
+    # try:
+    #     result = (
+    #         query
+    #         .order(primary_key, desc=True)
+    #         .limit(MAX_ROWS)
+    #         .execute()
+    #     )
+    #     df = pd.DataFrame(result.data or [])
+    # except Exception as exc:
+    #     st.error(f"Error loading data: {exc}")
+    #     df = pd.DataFrame()
+
+# ============================================================
+# LOAD ALL FILTERED DATA
+# ============================================================
+
     client = get_user_client()
-    query = client.table(TABLE_NAME).select("*")
+    def build_editor_query(start, end):
 
-    for column, values in filter_values.items():
-        if values:
-            query = query.in_(column, values)
-
-    if date_column and date_from:
-        query = query.gte(date_column, date_from.isoformat())
-
-    if date_column and date_to:
-        next_day = date_to + timedelta(days=1)
-        query = query.lt(date_column, next_day.isoformat())
-
-    try:
-        result = (
-            query
-            .order(primary_key, desc=True)
-            .limit(MAX_ROWS)
-            .execute()
+        query = (
+            client
+            .table(TABLE_NAME)
+            .select("*")
         )
-        df = pd.DataFrame(result.data or [])
-    except Exception as exc:
-        st.error(f"Error loading data: {exc}")
-        df = pd.DataFrame()
+
+        for column, values in filter_values.items():
+
+            if values:
+
+                query = query.in_(
+                    column,
+                    values,
+                )
+
+        if date_column and date_from:
+
+            query = query.gte(
+                date_column,
+                date_from.isoformat(),
+            )
+
+        if date_column and date_to:
+
+            next_day = (
+                date_to
+                + timedelta(days=1)
+            )
+
+            query = query.lt(
+                date_column,
+                next_day.isoformat(),
+            )
+
+        query = query.order(
+            primary_key,
+            desc=True,
+        )
+
+        query = query.range(
+            start,
+            end,
+        )
+
+        return query
+
+try:
+
+    df = fetch_all_from_query(
+        build_editor_query,
+        batch_size=BATCH_SIZE,
+    )
+
+except Exception as exc:
+
+    st.error(
+        f"Error loading data: {exc}"
+    )
+
+    df = pd.DataFrame()
+
 
     if not df.empty:
         st.caption(
-            f"Showing {len(df):,} record(s), limited to {MAX_ROWS:,} rows."
-        )
+                    f"Showing all {len(df):,} matching record(s). "
+                    f"Data was loaded in {BATCH_SIZE:,}-row batches."
+                )
 
         disabled_cols = [
             column for column in [primary_key, "updated_at"]
