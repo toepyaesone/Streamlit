@@ -37,7 +37,7 @@ SUPABASE_KEY = st.secrets.get(
 )
 
 TABLE_NAME = "ygntbpro"
-MAX_ROWS = 1000
+MAX_ROWS = None
 
 
 if not SUPABASE_URL or not SUPABASE_KEY:
