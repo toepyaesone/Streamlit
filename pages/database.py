@@ -690,7 +690,7 @@ def load_database():
 
    #response = (client.table(TABLE_NAME).select("*").limit(MAX_ROWS).execute())
 
-    query = supabase.table(TABLE_NAME).select("*")
+    query = client.table(TABLE_NAME).select("*")
     if MAX_ROWS:
         query = query.limit(MAX_ROWS)
     response = query.execute()
