@@ -9,7 +9,7 @@ from supabase import create_client, Client
 # ============================================================
 
 st.set_page_config(
-    page_title="Consultation Data",
+    page_title="YgnTBPro Database",
     page_icon="🩺",
     layout="wide"
 )
@@ -17,9 +17,9 @@ st.set_page_config(
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
-TABLE_NAME = "Consultation"
-PRIMARY_KEY = "patientid"
-DATE_COLUMN = "date"
+TABLE_NAME = "ygntbpro"
+PRIMARY_KEY = "PatientID"
+DATE_COLUMN = "Date"
 MAX_ROWS = 1000
 
 
@@ -148,7 +148,7 @@ def logout_user():
 
 if not st.session_state.session:
 
-    st.title("🩺 Consultation Data")
+    st.title("YgnTBPro Database Login")
 
     with st.form("login_form"):
 
@@ -195,7 +195,7 @@ can_delete = user_role == "admin"
 # SIDEBAR
 # ============================================================
 
-st.sidebar.title("🩺 Consultation")
+st.sidebar.title("YgnTBPro Database")
 st.sidebar.write(f"**Role:** {user_role}")
 
 if st.sidebar.button(
