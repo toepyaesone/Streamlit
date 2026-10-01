@@ -58,74 +58,310 @@ def get_base_client() -> Client:
 base_supabase = get_base_client()
 
 
+# def get_user_client() -> Client:
+#     """
+#     Create a Supabase client using the current authenticated
+#     session whenever possible.
+#     """
+
+#     client = create_client(
+#         SUPABASE_URL,
+#         SUPABASE_KEY,
+#     )
+
+#     try:
+#         session = base_supabase.auth.get_session()
+
+#         if session and session.session:
+#             access_token = session.session.access_token
+#             refresh_token = session.session.refresh_token
+
+#             if access_token:
+#                 client.auth.set_session(
+#                     access_token,
+#                     refresh_token,
+#                 )
+
+#     except Exception:
+#         pass
+
+#     return client
+
+
+# # ============================================================
+# # Authentication
+# # ============================================================
+
+# if "authenticated" not in st.session_state:
+#     st.session_state.authenticated = False
+
+# if "user_email" not in st.session_state:
+#     st.session_state.user_email = None
+
+
+# def login_user(email: str, password: str):
+#     try:
+#         email = email.strip().lower()
+
+#         response = base_supabase.auth.sign_in_with_password(
+#             {
+#                 "email": email,
+#                 "password": password,
+#             }
+#         )
+
+#         if response.user:
+
+#             authenticated_email = (
+#                 response.user.email or email
+#             ).strip().lower()
+
+#             st.session_state.authenticated = True
+#             st.session_state.user_email = authenticated_email
+#             st.session_state.user_id = response.user.id
+
+#             return True, None
+
+#         return False, "Authentication failed."
+
+#     except Exception as e:
+#         return False, str(e)
+
+
+# def logout_user():
+#     try:
+#         base_supabase.auth.sign_out()
+#     except Exception:
+#         pass
+
+#     for key in [
+#         "authenticated",
+#         "user_email",
+#         "user_id",
+#         "role",
+#         "db_df",
+#         "pending_updates",
+#         "pending_inserts",
+#         "pending_deletes",
+#         "grid_version",
+#     ]:
+#         st.session_state.pop(key, None)
+
+
+# # ============================================================
+# # Login screen
+# # ============================================================
+
+# if not st.session_state.authenticated:
+
+#     st.title("YgnTBPro Database")
+
+#     with st.form("login_form"):
+
+#         email = st.text_input(
+#             "Email",
+#             autocomplete="email",
+#         )
+
+#         password = st.text_input(
+#             "Password",
+#             type="password",
+#             autocomplete="current-password",
+#         )
+
+#         submitted = st.form_submit_button(
+#             "Login",
+#             use_container_width=True,
+#         )
+
+#     if submitted:
+
+#         success, error = login_user(
+#             email,
+#             password,
+#         )
+
+#         if success:
+#             st.rerun()
+#         else:
+#             st.error(error)
+
+#     st.stop()
+
+
+# # ============================================================
+# # Authenticated Supabase client
+# # ============================================================
+
+# client = get_user_client()
+
+
+# # ============================================================
+# # User role / permissions
+# # ============================================================
+
+# def get_user_role(
+#     supabase_client: Client,
+#     user_email: str,
+# ) -> str:
+#     """
+#     Get the application role from the user_role table
+#     using the authenticated user's email.
+#     """
+
+#     if not user_email:
+#         return "viewer"
+
+#     try:
+#         response = (
+#             supabase_client
+#             .table("user_roles")
+#             .select("role")
+#             .eq("email", user_email.strip().lower())
+#             .limit(1)
+#             .execute()
+#         )
+
+#         rows = response.data or []
+
+#         if rows:
+#             role_value = rows[0].get("role")
+
+#             if role_value:
+#                 role_value = str(role_value).strip().lower()
+
+#                 # Only allow known application roles
+#                 if role_value in {
+#                     "viewer",
+#                     "editor",
+#                     "admin",
+#                 }:
+#                     return role_value
+
+#     except Exception as e:
+#         st.warning(
+#             f"Could not read user role: {e}"
+#         )
+
+#     # Safe default
+#     return "viewer"
+
+
+# # ------------------------------------------------------------
+# # Get role using the authenticated login email
+# # ------------------------------------------------------------
+
+# user_email = (
+#     st.session_state.get("user_email")
+# )
+
+# role = get_user_role(
+#     client,
+#     user_email,
+# )
+
+# st.session_state.role = role
+
+
+# # ------------------------------------------------------------
+# # Permissions
+# # ------------------------------------------------------------
+
+# can_edit = role in {
+#     "editor",
+#     "admin",
+# }
+
+# can_add = role == "admin"
+
+# can_delete = role == "admin"
+
+@st.cache_resource
+def get_base_client() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+base_supabase = get_base_client()
+
+
 def get_user_client() -> Client:
-    """
-    Create a Supabase client using the current authenticated
-    session whenever possible.
-    """
+    """Return a client using the current authenticated access token."""
+    session = st.session_state.get("session")
+    if not session:
+        return base_supabase
 
-    client = create_client(
-        SUPABASE_URL,
-        SUPABASE_KEY,
-    )
+    client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    access_token = getattr(session, "access_token", None)
+    refresh_token = getattr(session, "refresh_token", None)
 
-    try:
-        session = base_supabase.auth.get_session()
+    if access_token and refresh_token:
+        try:
+            client.auth.set_session(access_token, refresh_token)
+            return client
+        except Exception:
+            pass
 
-        if session and session.session:
-            access_token = session.session.access_token
-            refresh_token = session.session.refresh_token
-
-            if access_token:
-                client.auth.set_session(
-                    access_token,
-                    refresh_token,
-                )
-
-    except Exception:
-        pass
+    if access_token:
+        client.postgrest.auth(access_token)
 
     return client
+
+
+# ============================================================
+# Session state
+# ============================================================
+
+DEFAULTS = {
+    "session": None,
+    "user_role": None,
+    "grid_version": 0,
+    "filter_version": 0,
+    "pending_updates": {},
+    "pending_inserts": [],
+    "pending_deletes": set(),
+    "editor_df": None,
+    "editor_source_df": None,
+}
+
+for key, value in DEFAULTS.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 
 # ============================================================
 # Authentication
 # ============================================================
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if "user_email" not in st.session_state:
-    st.session_state.user_email = None
-
-
 def login_user(email: str, password: str):
     try:
-        email = email.strip().lower()
-
         response = base_supabase.auth.sign_in_with_password(
-            {
-                "email": email,
-                "password": password,
-            }
+            {"email": email.strip(), "password": password}
         )
 
-        if response.user:
+        if not response.session:
+            return False, "Login failed: no authenticated session was returned."
 
-            authenticated_email = (
-                response.user.email or email
-            ).strip().lower()
+        st.session_state.session = response.session
+        user_client = get_user_client()
 
-            st.session_state.authenticated = True
-            st.session_state.user_email = authenticated_email
-            st.session_state.user_id = response.user.id
+        role_result = (
+            user_client.table("user_roles")
+            .select("role")
+            .eq("user_id", response.session.user.id)
+            .limit(1)
+            .execute()
+        )
 
-            return True, None
+        st.session_state.user_role = (
+            role_result.data[0].get("role", "viewer")
+            if role_result.data
+            else "viewer"
+        )
 
-        return False, "Authentication failed."
+        return True, "Login successful."
 
-    except Exception as e:
-        return False, str(e)
+    except Exception as exc:
+        return False, str(exc)
 
 
 def logout_user():
@@ -134,149 +370,37 @@ def logout_user():
     except Exception:
         pass
 
-    for key in [
-        "authenticated",
-        "user_email",
-        "user_id",
-        "role",
-        "db_df",
-        "pending_updates",
-        "pending_inserts",
-        "pending_deletes",
-        "grid_version",
-    ]:
-        st.session_state.pop(key, None)
+    for key, value in DEFAULTS.items():
+        st.session_state[key] = value
+
+    st.rerun()
 
 
-# ============================================================
-# Login screen
-# ============================================================
-
-if not st.session_state.authenticated:
-
-    st.title("YgnTBPro Database")
+if not st.session_state.session:
+    st.title("🔑 YgnTBPro Database Login")
 
     with st.form("login_form"):
-
-        email = st.text_input(
-            "Email",
-            autocomplete="email",
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        login_clicked = st.form_submit_button(
+            "Login", use_container_width=True, type="primary"
         )
 
-        password = st.text_input(
-            "Password",
-            type="password",
-            autocomplete="current-password",
-        )
-
-        submitted = st.form_submit_button(
-            "Login",
-            use_container_width=True,
-        )
-
-    if submitted:
-
-        success, error = login_user(
-            email,
-            password,
-        )
-
+    if login_clicked:
+        success, message = login_user(email, password)
         if success:
+            st.success(message)
             st.rerun()
         else:
-            st.error(error)
+            st.error(message)
 
     st.stop()
 
 
-# ============================================================
-# Authenticated Supabase client
-# ============================================================
-
-client = get_user_client()
-
-
-# ============================================================
-# User role / permissions
-# ============================================================
-
-def get_user_role(
-    supabase_client: Client,
-    user_email: str,
-) -> str:
-    """
-    Get the application role from the user_role table
-    using the authenticated user's email.
-    """
-
-    if not user_email:
-        return "viewer"
-
-    try:
-        response = (
-            supabase_client
-            .table("user_roles")
-            .select("role")
-            .eq("email", user_email.strip().lower())
-            .limit(1)
-            .execute()
-        )
-
-        rows = response.data or []
-
-        if rows:
-            role_value = rows[0].get("role")
-
-            if role_value:
-                role_value = str(role_value).strip().lower()
-
-                # Only allow known application roles
-                if role_value in {
-                    "viewer",
-                    "editor",
-                    "admin",
-                }:
-                    return role_value
-
-    except Exception as e:
-        st.warning(
-            f"Could not read user role: {e}"
-        )
-
-    # Safe default
-    return "viewer"
-
-
-# ------------------------------------------------------------
-# Get role using the authenticated login email
-# ------------------------------------------------------------
-
-user_email = (
-    st.session_state.get("user_email")
-)
-
-role = get_user_role(
-    client,
-    user_email,
-)
-
-st.session_state.role = role
-
-
-# ------------------------------------------------------------
-# Permissions
-# ------------------------------------------------------------
-
-can_edit = role in {
-    "editor",
-    "admin",
-}
-
-can_add = role == "admin"
-
-can_delete = role == "admin"
-
-
+user_role = st.session_state.user_role or "viewer"
+can_edit = user_role in {"editor", "admin"}
+can_add = user_role == "admin"
+can_delete = user_role == "admin"
 # ============================================================
 # Session-state initialization
 # ============================================================
