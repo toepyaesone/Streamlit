@@ -215,7 +215,7 @@ def get_user_role(
     try:
         response = (
             supabase_client
-            .table("user_role")
+            .table("user_roles")
             .select("role")
             .eq("email", user_email.strip().lower())
             .limit(1)
