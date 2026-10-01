@@ -1040,7 +1040,7 @@ with explorer_tab:
 
         try:
 
-            explorer_df = load_all_rows(supabase,TABLE_NAME,batch_size=1000)
+            explorer_df = load_all_rows(client,TABLE_NAME,batch_size=1000)
 
         except Exception as exc:
 
@@ -1220,7 +1220,7 @@ with editor_tab:
 
             try:
 
-                st.session_state.db_df = load_all_rows(supabase,TABLE_NAME,batch_size=1000)
+                st.session_state.db_df = load_all_rows(client,TABLE_NAME,batch_size=1000)
 
             except Exception as exc:
 
@@ -1855,7 +1855,7 @@ with editor_tab:
 
                 try:
 
-                    st.session_state.db_df = load_all_rows(supabase,TABLE_NAME,batch_size=1000)
+                    st.session_state.db_df = load_all_rows(client,TABLE_NAME,batch_size=1000)
 
                 except Exception as exc:
 
