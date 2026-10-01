@@ -1856,6 +1856,4 @@ if pending_rows:
 
 else:
 
-    st.caption(
-        "No pending changes."
-    )
+    st.caption("No pending changes.")
