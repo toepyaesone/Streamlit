@@ -1,6 +1,197 @@
+# import os
+# from datetime import date
+
+# import pandas as pd
+# import streamlit as st
+
+# from functions import (
+#     functionGetDataFromTable,
+#     switchingRowToColumn,
+#     function_uncode,
+#     function_reporting_period,
+#     create_category,
+#     create_category_combined,
+#     function_indicator_achievement,
+#     function_merge_target,
+#     ci_entitled,
+#     plotly_achievement_target_dropdown,
+#     plotly_variance_heatmap,
+#     plotly_combo_bar_percent,
+#     plotly_gender_agegroup,
+#     plotly_stack_bar,
+#     function_heatmap,
+#     function_sankey_cascade_log,
+#     plotly_waterfall,
+#     plotly_scatter_bubble,
+#     plot_nested_donut_chart,
+#     plot_scatter_sunburst,
+#     plotly_table_pivot,
+#     plotly_target_achievement_allcharts,
+#     plotly_funnel,
+#     plotly_table_count_percent,
+# )
+
+# st.set_page_config(
+#     page_title="YgnTBPro Data Analysis Dashboard",
+#     page_icon="🫁",
+#     layout="wide",
+#     initial_sidebar_state="expanded",
+# )
+
+# # -----------------------------------------------------------------------------
+# # Configuration
+# # -----------------------------------------------------------------------------
+# # Put these in Streamlit Community Cloud -> App -> Settings -> Secrets:
+
+# SUPABASE_URL_ygntbpro = "https://kocihpxevlowqbguhstf.supabase.co"
+# SUPABASE_KEY_ygntbpro = "sb_publishable_JtrNLjMNSvZ5LzvXKbv2xw_mj-hl5MD"
+
+# SUPABASE_URL = st.secrets.get("SUPABASE_URL_ygntbpro", os.getenv("SUPABASE_URL", ""))
+# SUPABASE_KEY = st.secrets.get("SUPABASE_KEY_ygntbpro", os.getenv("SUPABASE_KEY", ""))
+
+# COLUMN_UNCODE = [
+#     "Team", "Sex", "VOL", "Referralfor", "Cough", "Fever", "Wtloss",
+#     "Nightsweat", "Haemoptysis", "Chestpain", "Fatigue", "Neckglands",
+#     "TBcontact", "MDRTBcontact", "TBTreatmenthistory", "Smoking",
+#     "Reasonforexamination", "TypeofPatient", "PublicHealthCare1",
+#     "TypeofPatient1", "DM1", "HT1", "DMHT1", "RTIAVI1", "Generalweakness1",
+#     "Other1", "Cxrr", "CXRresult", "Sputum_request", "Micror",
+#     "Sputummicroscopyresult", "Genexpertrequested", "GeneXpertresult",
+#     "Bact_status", "Case", "Treatmentreferral", "TreatmentRegimen",
+#     "Placeforreferral", "TreatmentOutcome1211", "ContactInvestigation111",
+#     "DOTSupervision111", "DOTsupervisiontillTreatmentComp111", "Seeing1",
+#     "Hearing1", "Walking1", "Cognition1", "Selfcare1", "Communication1",
+#     "Disability1", "Xray2ndReading11", "CXRresult211", "TypeofTBTreatment",
+# ]
+
+# COLUMN_SYMPTOM = [
+#     "Cough", "Fever", "Wtloss", "Nightsweat", "Haemoptysis", "Chestpain",
+#     "Fatigue", "Neckglands",
+# ]
+
+# COLUMN_PRESERVED_FOR_TARGET = [
+#     "ReportingDate", "Team", "Tsp", "TargetCategory", "Group"
+# ]
+
+# UNCODE_MAPPING = {
+#     "CXRresult": {"1": "Normal", "2": "TB Active", "3": "TB Suspect", "4": "TB Healed", "5": "Other Abnormal"},
+#     "CXRresult211": {"1": "Normal", "2": "TB Active", "3": "TB Suspect", "4": "TB Healed", "5": "Other Abnormal"},
+#     "GeneXpertresult": {"0": "N", "1": "I", "2": "T", "3": "RR", "4": "TI", "5": "Denied", "6": "Missing", "7": "TT"},
+#     "Placeforreferral": {"1": "NTP", "2": "MMA", "3": "PSI", "4": "MATA", "5": "Other"},
+#     "TreatmentRegimen": {"1": "IR", "2": "RR", "3": "CR", "4": "MDR", "5": "MR"},
+#     "TypeofTBTreatment": {"1": "DS-TB", "2": "DR-TB", "3": "TPT"},
+#     "Sex": {"1": "Male", "2": "Female"},
+#     "Cxrr": {"1": "Requested", "2": "Not Requested"},
+#     "Reasonforexamination": {"1": "Diagnosis", "2": "Follow-Up"},
+#     "VOL": {"1": "Volunteer Referral", "2": "Walk-In"},
+#     "Referralfor": {"1": "Presumptive", "2": "CI"},
+#     "Case": {"1": "TB", "2": "No TB"},
+#     "DM1": {"1": "DM-New", "2": "No DM", "3": "DM-Old"},
+#     "HT1": {"1": "HT-New", "2": "No DM", "3": "HT-Old"},
+#     "HIVStatus": {"N": "Negative", "P": "Positive", "U": "Unknown"},
+#     "Genexpertrequested": {"1": "Requested", "2": "Not Requested"},
+#     "Bact_status": {"1": "BC", "2": "CD"},
+#     "Treatmentreferral": {"1": "Registered", "2": "Not Registered"},
+#     "TypeofPatient1": {"1": "New", "2": "Old"},
+#     "Team": {"1": "MMA", "5": "MATA"},
+# }
+
+# CRITERIA_INDICATORS = {
+#     "Examined Cases": {"Reasonforexamination": "Diagnosis"},
+#     "Notified Cases": {"Reasonforexamination": "Diagnosis", "Case": "TB"},
+#     "BC Cases": {"Reasonforexamination": "Diagnosis", "Case": "TB", "Bact_status": "BC"},
+# }
+
+# CATEGORY_PHC_CRITERIA = {
+#     "DM1": {"DM-New": "DM", "DM-Old": "DM"},
+#     "HT1": {"HT-New": "HT", "HT-Old": "HT"},
+#     "RTIAVI1": {"Yes": "AVI"},
+#     "Generalweakness1": {"Yes": "General Weakness"},
+#     "Other1": {"Yes": "Others"},
+# }
+
+# COLUMNS_SLICER = [
+#     "Team", "Tsp", "Approach", "Clinic", "Reasonforexamination", "Case",
+#     "Bact_status", "Treatmentreferral", "MonthDiagnosis11", "Cxrr", "CXRresult",
+#     "CXRresult211", "Genexpertrequested", "GeneXpertresult", "TypeofTBTreatment",
+#     "TargetCategory",
+# ]
+
+# COLUMN_CI_DOTS = [
+#     "Case", "Bact_status", "Treatmentreferral", "TypeofTBTreatment", "Age",
+#     "HIVStatus", "ContactInvestigation111", "DOTSupervision111",
+#     "DOTStartedDate111", "DOTsupervisiontillTreatmentComp111", "Tsp", "Ptstsp",
+#     "VOL", "Referralfor", "VolunteerName", "Organization", "TreatmentOutcome1211",
+#     "Tx_Outcome_Date", "DOTvolName111", "VolunteerGender111", "VolunteerOrganization111",
+# ]
+
+# MAPPING_TARGET_CATEGORY = {
+#     "PPM": ["PPM", "Diagnostic Center"],
+#     "Mobile": ["Mobile Visit", "Elderly Care", "Touring"],
+# }
+
+
+# def classify_symptomatic(df: pd.DataFrame, symptom_cols, target_val: str = "yes") -> pd.Series:
+#     cols = [symptom_cols] if isinstance(symptom_cols, str) else list(symptom_cols)
+#     valid_cols = [c for c in cols if c in df.columns]
+#     if not valid_cols:
+#         return pd.Series("Asymptomatic", index=df.index)
+#     cleaned = (
+#         df[valid_cols]
+#         .fillna("")
+#         .astype(str)
+#         .apply(lambda col: col.str.strip().str.lower())
+#     )
+#     return pd.Series(
+#         "Symptomatic",
+#         index=df.index,
+#     ).where(cleaned.eq(target_val.lower()).any(axis=1), "Asymptomatic")
+
+
+# @st.cache_data(ttl=900, show_spinner=False)
+# def load_table(table_name: str) -> pd.DataFrame:
+#     df = functionGetDataFromTable(table_name, SUPABASE_URL, SUPABASE_KEY, page_size=1000)
+#     if df is None:
+#         raise RuntimeError(f"Could not retrieve '{table_name}' from Supabase.")
+#     return df
+
+
+# @st.cache_data(ttl=900, show_spinner=False)
+# def prepare_data(raw_dashboard: pd.DataFrame, raw_target: pd.DataFrame):
+#     dashboard = raw_dashboard.copy()
+#     target = raw_target.copy()
+
+#     target = switchingRowToColumn(
+#         df=target,
+#         column_name="Indicator",
+#         preserved_column_list=COLUMN_PRESERVED_FOR_TARGET,
+#         value_col="Target",
+#     )
+#     target = function_uncode(target, colName=["Team"], mapping=UNCODE_MAPPING)
+#     target = function_reporting_period(target, date_col="ReportingDate")
+#     target = target.rename(columns={"Group": "Clinic"})
+
+#     dashboard = create_category(
+#         dashboard,
+#         source_col="Approach",
+#         criteria_mapping=MAPPING_TARGET_CATEGORY,
+#         output_col="TargetCategory",
+#         default="",
+#     )
+#     dashboard = dashboard.rename(columns={"EPI11": "Clinic"})
+#     dashboard = function_uncode(dashboard, colName=COLUMN_UNCODE, mapping=UNCODE_MAPPING)
+#     dashboard = function_reporting_period(dashboard)
+#     dashboard = create_category_combined(
+#         dashboard, CATEGORY_PHC_CRITERIA, "PrimaryHealthcare"
+#     )
+#     dashboard["Date"] = pd.to_datetime(dashboard["Date"], errors="coerce")
+#     target["ReportingDate"] = pd.to_datetime(target["ReportingDate"], errors="coerce")
+#     dashboard = dashboard.dropna(subset=["Date"]).copy()
+#     target = target.dropna(subset=["ReportingDate"]).copy()
+#     return dashboard, target
+
 import os
 from datetime import date
-
 import pandas as pd
 import streamlit as st
 
@@ -41,13 +232,11 @@ st.set_page_config(
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-# Put these in Streamlit Community Cloud -> App -> Settings -> Secrets:
-
 SUPABASE_URL_ygntbpro = "https://kocihpxevlowqbguhstf.supabase.co"
 SUPABASE_KEY_ygntbpro = "sb_publishable_JtrNLjMNSvZ5LzvXKbv2xw_mj-hl5MD"
 
-SUPABASE_URL = st.secrets.get("SUPABASE_URL_ygntbpro", os.getenv("SUPABASE_URL", ""))
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY_ygntbpro", os.getenv("SUPABASE_KEY", ""))
+SUPABASE_URL = st.secrets.get("SUPABASE_URL_ygntbpro", os.getenv("SUPABASE_URL", SUPABASE_URL_ygntbpro))
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY_ygntbpro", os.getenv("SUPABASE_KEY", SUPABASE_KEY_ygntbpro))
 
 COLUMN_UNCODE = [
     "Team", "Sex", "VOL", "Referralfor", "Cough", "Fever", "Wtloss",
@@ -131,28 +320,23 @@ MAPPING_TARGET_CATEGORY = {
 }
 
 
-def classify_symptomatic(df: pd.DataFrame, symptom_cols, target_val: str = "yes") -> pd.Series:
+def classify_symptomatic(df: pd.DataFrame, symptom_cols, target_vals=("yes", "1")) -> pd.Series:
     cols = [symptom_cols] if isinstance(symptom_cols, str) else list(symptom_cols)
     valid_cols = [c for c in cols if c in df.columns]
     if not valid_cols:
         return pd.Series("Asymptomatic", index=df.index)
-    cleaned = (
-        df[valid_cols]
-        .fillna("")
-        .astype(str)
-        .apply(lambda col: col.str.strip().str.lower())
-    )
-    return pd.Series(
-        "Symptomatic",
-        index=df.index,
-    ).where(cleaned.eq(target_val.lower()).any(axis=1), "Asymptomatic")
+    
+    cleaned = df[valid_cols].fillna("").astype(str).apply(lambda c: c.str.strip().str.lower())
+    is_symptomatic = cleaned.isin([v.lower() for v in target_vals]).any(axis=1)
+    
+    return pd.Series("Asymptomatic", index=df.index).mask(is_symptomatic, "Symptomatic")
 
 
 @st.cache_data(ttl=900, show_spinner=False)
 def load_table(table_name: str) -> pd.DataFrame:
     df = functionGetDataFromTable(table_name, SUPABASE_URL, SUPABASE_KEY, page_size=1000)
-    if df is None:
-        raise RuntimeError(f"Could not retrieve '{table_name}' from Supabase.")
+    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+        raise RuntimeError(f"Could not retrieve standard records for '{table_name}' from Supabase.")
     return df
 
 
@@ -161,35 +345,55 @@ def prepare_data(raw_dashboard: pd.DataFrame, raw_target: pd.DataFrame):
     dashboard = raw_dashboard.copy()
     target = raw_target.copy()
 
+    # Filter target preserved columns to only those actually present in the dataset
+    valid_target_preserved = [c for c in COLUMN_PRESERVED_FOR_TARGET if c in target.columns]
+    
     target = switchingRowToColumn(
         df=target,
         column_name="Indicator",
-        preserved_column_list=COLUMN_PRESERVED_FOR_TARGET,
+        preserved_column_list=valid_target_preserved,
         value_col="Target",
     )
-    target = function_uncode(target, colName=["Team"], mapping=UNCODE_MAPPING)
-    target = function_reporting_period(target, date_col="ReportingDate")
-    target = target.rename(columns={"Group": "Clinic"})
+    
+    if "Team" in target.columns:
+        target = function_uncode(target, colName=["Team"], mapping=UNCODE_MAPPING)
+    
+    if "ReportingDate" in target.columns:
+        target = function_reporting_period(target, date_col="ReportingDate")
+    
+    if "Group" in target.columns:
+        target = target.rename(columns={"Group": "Clinic"})
 
-    dashboard = create_category(
-        dashboard,
-        source_col="Approach",
-        criteria_mapping=MAPPING_TARGET_CATEGORY,
-        output_col="TargetCategory",
-        default="",
-    )
-    dashboard = dashboard.rename(columns={"EPI11": "Clinic"})
-    dashboard = function_uncode(dashboard, colName=COLUMN_UNCODE, mapping=UNCODE_MAPPING)
+    if "Approach" in dashboard.columns:
+        dashboard = create_category(
+            dashboard,
+            source_col="Approach",
+            criteria_mapping=MAPPING_TARGET_CATEGORY,
+            output_col="TargetCategory",
+            default="",
+        )
+    
+    if "EPI11" in dashboard.columns:
+        dashboard = dashboard.rename(columns={"EPI11": "Clinic"})
+        
+    # Uncode only columns that exist in dashboard dataframe
+    valid_uncode_cols = [c for c in COLUMN_UNCODE if c in dashboard.columns]
+    dashboard = function_uncode(dashboard, colName=valid_uncode_cols, mapping=UNCODE_MAPPING)
+    
     dashboard = function_reporting_period(dashboard)
     dashboard = create_category_combined(
         dashboard, CATEGORY_PHC_CRITERIA, "PrimaryHealthcare"
     )
-    dashboard["Date"] = pd.to_datetime(dashboard["Date"], errors="coerce")
-    target["ReportingDate"] = pd.to_datetime(target["ReportingDate"], errors="coerce")
-    dashboard = dashboard.dropna(subset=["Date"]).copy()
-    target = target.dropna(subset=["ReportingDate"]).copy()
+    
+    if "Date" in dashboard.columns:
+        dashboard["Date"] = pd.to_datetime(dashboard["Date"], errors="coerce")
+        dashboard = dashboard.dropna(subset=["Date"]).copy()
+        
+    if "ReportingDate" in target.columns:
+        target["ReportingDate"] = pd.to_datetime(target["ReportingDate"], errors="coerce")
+        target = target.dropna(subset=["ReportingDate"]).copy()
+        
     return dashboard, target
-
 
 def options_for(df: pd.DataFrame, col: str):
     if col not in df.columns:
