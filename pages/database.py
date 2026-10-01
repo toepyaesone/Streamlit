@@ -235,55 +235,123 @@ def values_equal(left, right):
 
 
 def clean_value(value):
-    """Convert pandas/numpy values into normal Python values."""
+    """Convert values to JSON/AG Grid safe Python values."""
 
     if value is None:
         return None
 
+    # Pandas / NumPy missing values
     try:
         if pd.isna(value):
             return None
-    except Exception:
+    except (TypeError, ValueError):
         pass
 
+    # NumPy scalar
     if isinstance(value, np.generic):
         value = value.item()
 
+    # Decimal
     if isinstance(value, Decimal):
         return float(value)
 
-    if isinstance(value, (pd.Timestamp, datetime)):
+    # Pandas timestamp
+    if isinstance(value, pd.Timestamp):
         return value.isoformat()
 
+    # datetime
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    # date
     if isinstance(value, date):
         return value.isoformat()
 
+    # Objects such as URL / UUID / other custom objects
+    # should be converted to ordinary strings.
+    if not isinstance(
+        value,
+        (
+            str,
+            int,
+            float,
+            bool,
+            list,
+            tuple,
+            dict,
+        ),
+    ):
+        return str(value)
+
     return value
 
+def make_dataframe_aggrid_safe(df):
+    """
+    Convert every DataFrame value to a normal Python value
+    that Streamlit/AG Grid can serialize safely.
+    """
+
+    if df is None:
+        return pd.DataFrame()
+
+    result = df.copy()
+
+    for column in result.columns:
+
+        result[column] = result[column].map(
+            clean_value
+        )
+
+    return result
+
+# def make_json_safe(data):
+#     """Recursively make data safe for Supabase JSON payloads."""
+
+#     if isinstance(data, dict):
+#         return {
+#             str(k): make_json_safe(v)
+#             for k, v in data.items()
+#         }
+
+#     if isinstance(data, (list, tuple)):
+#         return [
+#             make_json_safe(v)
+#             for v in data
+#         ]
+
+#     if isinstance(data, set):
+#         return [
+#             make_json_safe(v)
+#             for v in data
+#         ]
+
+#     return clean_value(data)
 
 def make_json_safe(data):
-    """Recursively make data safe for Supabase JSON payloads."""
+    """Recursively convert values to JSON-safe Python values."""
 
     if isinstance(data, dict):
+
         return {
             str(k): make_json_safe(v)
             for k, v in data.items()
         }
 
     if isinstance(data, (list, tuple)):
+
         return [
             make_json_safe(v)
             for v in data
         ]
 
     if isinstance(data, set):
+
         return [
             make_json_safe(v)
             for v in data
         ]
 
     return clean_value(data)
-
 
 def normalize_key(value):
     """Normalize primary-key values for session-state dictionaries."""
@@ -2076,11 +2144,9 @@ def render_editor_grid(
     raw_df,
 ):
 
-    display_df = (
-        apply_pending_changes_to_df(
-            raw_df
-        )
-    )
+    display_df = (apply_pending_changes_to_df(raw_df))
+
+    display_df = make_dataframe_aggrid_safe(display_df)
 
     # Always ensure expected columns exist.
     for column in TABLE_COLUMNS:
@@ -3010,9 +3076,9 @@ def render_explorer():
 
     end = start + page_size
 
-    page_df = filtered_df.iloc[
-        start:end
-    ].copy()
+    page_df = filtered_df.iloc[start:end].copy()
+
+    page_df = make_dataframe_aggrid_safe(page_df)
 
     # --------------------------------------------------------
     # Summary
