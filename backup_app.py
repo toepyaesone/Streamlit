@@ -30,6 +30,13 @@ from functions import (
     plotly_table_count_percent,
 )
 
+st.set_page_config(
+    page_title="YgnTBPro Data Analysis Dashboard",
+    page_icon="🫁",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -126,35 +133,52 @@ def classify_symptomatic(df: pd.DataFrame, symptom_cols, target_vals=("yes", "1"
     valid_cols = [c for c in cols if c in df.columns]
     if not valid_cols:
         return pd.Series("Asymptomatic", index=df.index)
+    
     cleaned = df[valid_cols].fillna("").astype(str).apply(lambda c: c.str.strip().str.lower())
     is_symptomatic = cleaned.isin([v.lower() for v in target_vals]).any(axis=1)
+    
     return pd.Series("Asymptomatic", index=df.index).mask(is_symptomatic, "Symptomatic")
 
 
 @st.cache_data(ttl=900, show_spinner=False)
 def load_table(table_name: str) -> pd.DataFrame:
-    df = functionGetDataFromTable(table_name, SUPABASE_URL, SUPABASE_KEY, page_size=1000)
-    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
-        raise RuntimeError(f"Could not retrieve '{table_name}' from Supabase.")
+    try:
+        df = functionGetDataFromTable(table_name, SUPABASE_URL, SUPABASE_KEY, page_size=1000)
+    except Exception as err:
+        raise RuntimeError(f"Error executing functionGetDataFromTable('{table_name}'): {err}")
+        
+    if df is None:
+        raise RuntimeError(
+            f"Could not retrieve '{table_name}' from Supabase. "
+            f"Check if table exists, RLS policies allow SELECT, or credentials are valid.\n"
+            f"URL Used: {SUPABASE_URL[:25]}..."
+        )
+    if isinstance(df, pd.DataFrame) and df.empty:
+        raise RuntimeError(f"Table '{table_name}' was retrieved successfully but contains 0 records.")
+        
     return df
-
 
 @st.cache_data(ttl=900, show_spinner=False)
 def prepare_data(raw_dashboard: pd.DataFrame, raw_target: pd.DataFrame):
     dashboard = raw_dashboard.copy()
     target = raw_target.copy()
 
+    # Filter target preserved columns to only those actually present in the dataset
     valid_target_preserved = [c for c in COLUMN_PRESERVED_FOR_TARGET if c in target.columns]
+    
     target = switchingRowToColumn(
         df=target,
         column_name="Indicator",
         preserved_column_list=valid_target_preserved,
         value_col="Target",
     )
+    
     if "Team" in target.columns:
         target = function_uncode(target, colName=["Team"], mapping=UNCODE_MAPPING)
+    
     if "ReportingDate" in target.columns:
         target = function_reporting_period(target, date_col="ReportingDate")
+    
     if "Group" in target.columns:
         target = target.rename(columns={"Group": "Clinic"})
 
@@ -166,11 +190,14 @@ def prepare_data(raw_dashboard: pd.DataFrame, raw_target: pd.DataFrame):
             output_col="TargetCategory",
             default="",
         )
+    
     if "EPI11" in dashboard.columns:
         dashboard = dashboard.rename(columns={"EPI11": "Clinic"})
         
+    # Uncode only columns that exist in dashboard dataframe
     valid_uncode_cols = [c for c in COLUMN_UNCODE if c in dashboard.columns]
     dashboard = function_uncode(dashboard, colName=valid_uncode_cols, mapping=UNCODE_MAPPING)
+    
     dashboard = function_reporting_period(dashboard)
     dashboard = create_category_combined(
         dashboard, CATEGORY_PHC_CRITERIA, "PrimaryHealthcare"
@@ -179,12 +206,12 @@ def prepare_data(raw_dashboard: pd.DataFrame, raw_target: pd.DataFrame):
     if "Date" in dashboard.columns:
         dashboard["Date"] = pd.to_datetime(dashboard["Date"], errors="coerce")
         dashboard = dashboard.dropna(subset=["Date"]).copy()
+        
     if "ReportingDate" in target.columns:
         target["ReportingDate"] = pd.to_datetime(target["ReportingDate"], errors="coerce")
         target = target.dropna(subset=["ReportingDate"]).copy()
         
     return dashboard, target
-
 
 def options_for(df: pd.DataFrame, col: str):
     if col not in df.columns:
@@ -197,7 +224,7 @@ def options_for(df: pd.DataFrame, col: str):
     return sorted(values)
 
 
-def safe_plotly(fig):
+def safe_plotly(fig, height=None):
     if fig is None:
         return
     st.plotly_chart(fig, use_container_width=True, theme=None, config={"displaylogo": False})
@@ -212,7 +239,7 @@ def safe_section(title, fn):
 
 
 # -----------------------------------------------------------------------------
-# Main View Setup
+# App startup
 # -----------------------------------------------------------------------------
 if not SUPABASE_URL or not SUPABASE_KEY:
     st.error("Supabase credentials are missing. Add SUPABASE_URL and SUPABASE_KEY to Streamlit Secrets.")
@@ -237,7 +264,7 @@ max_date = df_slicer["Date"].max().date()
 # Sidebar filters
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.header("Dashboard Filters")
+    st.header("Filters")
     date_from = st.date_input("From", value=min_date, min_value=min_date, max_value=max_date)
     date_to = st.date_input("To", value=max_date, min_value=min_date, max_value=max_date)
 
@@ -255,12 +282,15 @@ with st.sidebar:
             st.session_state[f"filter_{col}"] = []
         st.rerun()
 
-# Apply filters
+# -----------------------------------------------------------------------------
+# Apply filters once. Everything below uses these cached-in-memory filtered frames.
+# -----------------------------------------------------------------------------
 filtered_df = df_slicer[
     (df_slicer["Date"].dt.date >= date_from)
     & (df_slicer["Date"].dt.date <= date_to)
 ].copy()
 
+# Targets are monthly reporting periods; use the months covered by the selected dates.
 from_month = pd.Timestamp(date_from).to_period("M").to_timestamp()
 to_month = pd.Timestamp(date_to).to_period("M").to_timestamp()
 target_df = df_target[
@@ -287,7 +317,9 @@ progress = function_merge_target(
     indicators=tuple(CRITERIA_INDICATORS.keys()),
 )
 
-# KPI Calculations
+# -----------------------------------------------------------------------------
+# KPI calculations
+# -----------------------------------------------------------------------------
 total_attendant = len(filtered_df)
 presumptive_count = int(achievement["Examined Cases"].sum())
 notified_count = int(achievement["Notified Cases"].sum())
@@ -297,7 +329,7 @@ presumptive_target = float(progress.get("Examined Cases Target", pd.Series(dtype
 notified_target = float(progress.get("Notified Cases Target", pd.Series(dtype=float)).sum())
 bc_target = float(progress.get("BC Cases Target", pd.Series(dtype=float)).sum())
 
-
+# ---------- KPI ACHIEVEMENT ----------
 def achievement_pct(actual, target):
     if target is None or target == 0:
         return 0.0
@@ -306,6 +338,7 @@ def achievement_pct(actual, target):
 
 def achievement_text(actual, target):
     ach = achievement_pct(actual, target)
+
     if ach >= 100:
         return f"↑ {ach:.1f}% of {target:,.0f}", "green"
     else:
@@ -315,35 +348,57 @@ def achievement_text(actual, target):
 k1, k2, k3, k4 = st.columns(4)
 
 with k1:
-    st.metric("Total Attendant", f"{total_attendant:,}")
+    st.metric("Total Attendant",f"{total_attendant:,}")
 
 with k2:
-    st.metric("Examined Cases", f"{presumptive_count:,}")
-    text, color = achievement_text(presumptive_count, presumptive_target)
-    st.markdown(f"<span style='color:{color}; font-weight:600;'>{text}</span>", unsafe_allow_html=True)
+    st.metric("Examined Cases",f"{presumptive_count:,}")
+    text, color = achievement_text(presumptive_count,presumptive_target)
+    st.markdown(f"<span style='color:{color}; font-weight:600;'>{text}</span>",unsafe_allow_html=True)
 
 with k3:
-    st.metric("Notified Cases", f"{notified_count:,}")
-    text, color = achievement_text(notified_count, notified_target)
-    st.markdown(f"<span style='color:{color}; font-weight:600;'>{text}</span>", unsafe_allow_html=True)
+    st.metric("Notified Cases",f"{notified_count:,}")
+    text, color = achievement_text(notified_count,notified_target)
+    st.markdown(f"<span style='color:{color}; font-weight:600;'>{text}</span>",unsafe_allow_html=True)
 
 with k4:
-    st.metric("BC Cases", f"{bc_count:,}")
-    text, color = achievement_text(bc_count, bc_target)
-    st.markdown(f"<span style='color:{color}; font-weight:600;'>{text}</span>", unsafe_allow_html=True)
+    st.metric("BC Cases",f"{bc_count:,}")
+    text, color = achievement_text(bc_count,bc_target)
+    st.markdown(f"<span style='color:{color}; font-weight:600;'>{text}</span>",unsafe_allow_html=True)
+
+
+# def pct(n, d):
+#     return f"{(n / d * 100):.0f}%" if d > 0 else "N/A"
+# k1, k2, k3, k4 = st.columns(4)
+# k1.metric("Total Attendant", f"{total_attendant:,}")
+# k2.metric("Examined Cases", f"{presumptive_count:,}", f"{pct(presumptive_count, presumptive_target)} of {presumptive_target:,.0f}")
+# k3.metric("Notified Cases", f"{notified_count:,}", f"{pct(notified_count, notified_target)} of {notified_target:,.0f}")
+# k4.metric("BC Cases", f"{bc_count:,}", f"{pct(bc_count, bc_target)} of {bc_target:,.0f}")
 
 st.caption(
     f"SELECTED PERIOD: From {date_from:%d %b %Y} To {date_to:%d %b %Y} | "
     f"Records: {len(filtered_df):,}"
 )
 
-# Render sections
+# -----------------------------------------------------------------------------
+# Render only the selected section. This is substantially lighter than rerendering
+# every chart on every Streamlit interaction.
+# -----------------------------------------------------------------------------
+
+# tab1, tab2, tab3, tab4 = st.tabs([
+#     "📊 Overview",
+#     "🫁 TB Care Cascade",
+#     "🏥 Primary Healthcare",
+#     "🔎 Detailed Analysis"
+# ])
+
 section = st.radio(
     "Dashboard section",
     ["📊 Overview", "🫁 Tuberculosis", "🏥 Primary Healthcare", "🔎 Analysis"],
     horizontal=True,
 )
 
+# with tab1:
+#     st.subheader("Overview")
 if section == "📊 Overview":
     safe_section("Target vs Achievement", lambda: safe_plotly(
         plotly_achievement_target_dropdown(
@@ -411,6 +466,8 @@ if section == "📊 Overview":
         plotly_gender_agegroup(filtered_df, "Sex", "Age", 500)
     ))
 
+# with tab2:
+#     st.subheader("TB Care Cascade")
 elif section == "🫁 Tuberculosis":
     df_tb = filtered_df[filtered_df["Case"] == "TB"].copy()
     df_tb["HIVStatus"] = df_tb["HIVStatus"].replace({"P": "Positive", "N": "Negative", "Y": "Positive", "U": "Unknown", "": "Unknown"})
@@ -495,7 +552,8 @@ elif section == "🫁 Tuberculosis":
                     chart_title="DOTS Provision",
                 )
             ))
-
+# with tab3:
+#     st.subheader("Primary Healthcare")
 elif section == "🏥 Primary Healthcare":
     c1, c2 = st.columns(2)
     with c1:
@@ -514,7 +572,7 @@ elif section == "🏥 Primary Healthcare":
         plot_scatter_sunburst(
             df=filtered_df,
             x_col="PrimaryHealthcare",
-            y_axis="Case",
+            yaxis="Case",
             main_title="Primary Healthcare Among Examined Cases",
             exclude_blank=True,
         )
@@ -531,7 +589,8 @@ elif section == "🏥 Primary Healthcare":
             title="Average Consultation Per Day",
         )
     ))
-
+# with tab4:
+#     st.subheader("Detailed Analysis")
 else:
     charts = plotly_target_achievement_allcharts(
         dataframe=progress,
