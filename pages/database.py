@@ -198,8 +198,75 @@ def values_equal(left, right) -> bool:
 
 
 def clean_value(value):
-    return None if pd.isna(value) else value
+    """Convert Pandas/NumPy values to JSON-serializable Python values."""
+    if value is None:
+        return None
 
+    # Handle pandas/NumPy missing values
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    # NumPy scalar -> native Python scalar
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except (ValueError, TypeError):
+            pass
+
+    # Pandas Timestamp
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+
+    # Python date/datetime
+    if hasattr(value, "isoformat") and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except (ValueError, TypeError):
+            pass
+
+    return value
+    
+def make_json_safe(data):
+    """Recursively convert Pandas/NumPy values to JSON-safe Python values."""
+    if isinstance(data, dict):
+        return {
+            str(key): make_json_safe(value)
+            for key, value in data.items()
+        }
+
+    if isinstance(data, (list, tuple)):
+        return [make_json_safe(value) for value in data]
+
+    if isinstance(data, set):
+        return [make_json_safe(value) for value in data]
+
+    if data is None:
+        return None
+
+    try:
+        if pd.isna(data):
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    # NumPy scalar types: int64, float64, bool_, etc.
+    if hasattr(data, "item"):
+        try:
+            return data.item()
+        except (ValueError, TypeError):
+            pass
+
+    # Pandas Timestamp / Python datetime/date
+    if hasattr(data, "isoformat") and not isinstance(data, str):
+        try:
+            return data.isoformat()
+        except (ValueError, TypeError):
+            pass
+
+    return data
 
 def add_pending_update(primary_id, changes):
     primary_id = str(primary_id)
@@ -712,10 +779,12 @@ with tabs[1]:
                     continue
 
                 try:
+                    safe_update_data = make_json_safe(update_data)
+
                     response = (
                         sync_client
                         .table(TABLE_NAME)
-                        .update(update_data)
+                        .update(safe_update_data)
                         .eq(primary_key, pid)
                         .execute()
                     )
@@ -739,10 +808,11 @@ with tabs[1]:
                         list(st.session_state.pending_inserts)
                     ):
                         try:
+                            safe_row_data = make_json_safe(row_data)
                             response = (
                                 sync_client
                                 .table(TABLE_NAME)
-                                .insert(row_data)
+                                .insert(safe_row_data)
                                 .execute()
                             )
                             if response.data:
