@@ -1132,7 +1132,7 @@ elif section == "🏥 Primary Healthcare":
         plot_scatter_sunburst(
             df=filtered_df,
             x_col="PrimaryHealthcare",
-            y_axis="Case",
+            yaxis="Case",
             main_title="Primary Healthcare Among Examined Cases",
             exclude_blank=True,
         )
