@@ -1,2804 +1,3711 @@
-# database.py
-# ============================================================
-# Optimized Supabase / Streamlit database editor
-#
-# Features
-#   - Supabase email/password authentication
-#   - RLS-aware authenticated client
-#   - user_roles lookup by authenticated user UUID
-#   - Viewer / Editor / Admin permissions
-#   - Server-side filtering
-#   - Server-side pagination
-#   - AG Grid editor
-#   - Persistent pending UPDATE / INSERT / DELETE
-#   - Add Row
-#   - Delete Selected
-#   - Sync / Discard
-#   - Explorer
-#   - CSV export
-#   - JSON-safe Supabase payloads
-#
-# Table:
-#   ygntbpro
-#
-# Primary key:
-#   PatientID
-# ============================================================
-#############################################################
-# BACKUP ALTRNATIVE: database_optimized.py
-#############################################################
-import os
-from datetime import date, datetime, timedelta
-from decimal import Decimal
-from typing import Any
 
-import numpy as np
+# import os
+# from datetime import date, datetime, timedelta
+# from decimal import Decimal
+# from typing import Any
+
+# import numpy as np
+# import pandas as pd
+# import streamlit as st
+
+# from supabase import Client, create_client
+
+# from st_aggrid import (
+#     AgGrid,
+#     DataReturnMode,
+#     GridOptionsBuilder,
+#     GridUpdateMode,
+#     JsCode,
+# )
+
+
+# # ============================================================
+# # STREAMLIT PAGE CONFIG
+# # ============================================================
+
+# st.set_page_config(
+#     page_title="YgnTBPro Database",
+#     page_icon="🗄️",
+#     layout="wide",
+# )
+
+
+# # ============================================================
+# # CONFIGURATION
+# # ============================================================
+
+# TABLE_NAME = "ygntbpro"
+# ROLE_TABLE = "user_roles"
+
+# PRIMARY_KEY_CANDIDATES = [
+#     "PatientID",
+#     "patientid",
+#     "patient_id",
+# ]
+
+# DATE_CANDIDATES = [
+#     "Date",
+#     "date",
+# ]
+
+# # Server request size.
+# # This is NOT the maximum number of records in the database.
+# BATCH_SIZE = 1000
+
+# # Number of rows rendered in AG Grid at one time.
+# EDITOR_PAGE_SIZE = 300
+
+# # Explorer display limit.
+# EXPLORER_DISPLAY_LIMIT = 1000
+
+# # Number of records requested for CSV export per batch.
+# CSV_BATCH_SIZE = 1000
+
+
+# # ============================================================
+# # SESSION STATE
+# # ============================================================
+
+# DEFAULTS = {
+#     "session": None,
+#     "user_role": None,
+
+#     # Editor
+#     "editor_loaded": False,
+#     "editor_query_version": 0,
+#     "editor_page": 1,
+#     "editor_page_size": EDITOR_PAGE_SIZE,
+
+#     # Current loaded editor filters
+#     "editor_filters": None,
+
+#     # Pending changes
+#     "pending_updates": {},
+#     "pending_inserts": [],
+#     "pending_deletes": set(),
+
+#     # New rows
+#     "new_row_buffer": [],
+
+#     # UI
+#     "active_tab": "Editor",
+#     "explorer_query_version": 0,
+
+#     # Prevent repeated login/error messages
+#     "login_message": None,
+# }
+
+
+# for key, default_value in DEFAULTS.items():
+#     if key not in st.session_state:
+#         st.session_state[key] = default_value
+
+
+# # ============================================================
+# # ENVIRONMENT / SECRETS
+# # ============================================================
+
+# def get_secret(name: str, default: str | None = None) -> str | None:
+#     """
+#     Read a configuration value from Streamlit secrets first,
+#     then environment variables.
+#     """
+
+#     try:
+#         value = st.secrets.get(name)
+#         if value:
+#             return str(value)
+#     except Exception:
+#         pass
+
+#     return os.getenv(name, default)
+
+
+# SUPABASE_URL = (
+#     get_secret("SUPABASE_URL_ygntbpro")
+#     or get_secret("SUPABASE_URL")
+# )
+
+# SUPABASE_KEY = (
+#     get_secret("SUPABASE_KEY_ygntbpro")
+#     or get_secret("SUPABASE_KEY")
+# )
+
+
+# # ============================================================
+# # BASIC VALIDATION
+# # ============================================================
+
+# if not SUPABASE_URL or not SUPABASE_KEY:
+#     st.error(
+#         "Supabase configuration is missing. "
+#         "Please configure SUPABASE_URL_ygntbpro and "
+#         "SUPABASE_KEY_ygntbpro in Streamlit secrets."
+#     )
+#     st.stop()
+
+
+# # ============================================================
+# # SUPABASE CLIENT
+# # ============================================================
+
+# @st.cache_resource(show_spinner=False)
+# def get_base_client() -> Client:
+#     """
+#     Create the base Supabase client.
+
+#     This client is used only for operations that do not need
+#     the logged-in user's session.
+#     """
+
+#     return create_client(
+#         SUPABASE_URL,
+#         SUPABASE_KEY,
+#     )
+
+
+# def get_user_client() -> Client:
+#     """
+#     Create an authenticated Supabase client using the current
+#     Streamlit session.
+
+#     IMPORTANT:
+#     Do not cache this client because it contains user-specific
+#     authentication state.
+#     """
+
+#     session = st.session_state.get("session")
+
+#     if not session:
+#         raise RuntimeError("No authenticated session.")
+
+#     client = create_client(
+#         SUPABASE_URL,
+#         SUPABASE_KEY,
+#     )
+
+#     access_token = getattr(session, "access_token", None)
+#     refresh_token = getattr(session, "refresh_token", None)
+
+#     if not access_token:
+#         raise RuntimeError("Authenticated session has no access token.")
+
+#     # Preferred method
+#     try:
+#         if refresh_token:
+#             client.auth.set_session(
+#                 access_token,
+#                 refresh_token,
+#             )
+#         else:
+#             # Some versions still accept set_session with
+#             # an empty/None refresh token.
+#             client.auth.set_session(
+#                 access_token,
+#                 "",
+#             )
+
+#         return client
+
+#     except Exception:
+#         # Compatibility fallback for different supabase-py versions.
+#         try:
+#             client.postgrest.auth(access_token)
+#             return client
+#         except Exception as exc:
+#             raise RuntimeError(
+#                 f"Unable to establish authenticated Supabase client: {exc}"
+#             )
+
+
+# # ============================================================
+# # AUTHENTICATION
+# # ============================================================
+
+# def login_user(email: str, password: str):
+#     """
+#     Authenticate user and retrieve role by authenticated user UUID.
+
+#     Role lookup is intentionally NOT performed by email.
+#     """
+
+#     try:
+#         base_supabase = get_base_client()
+
+#         response = base_supabase.auth.sign_in_with_password(
+#             {
+#                 "email": email.strip(),
+#                 "password": password,
+#             }
+#         )
+
+#         if not response.session:
+#             return False, "Login failed: no authenticated session was returned."
+
+#         st.session_state.session = response.session
+
+#         user_client = get_user_client()
+
+#         role_result = (
+#             user_client.table(ROLE_TABLE)
+#             .select("role")
+#             .eq(
+#                 "user_id",
+#                 response.session.user.id,
+#             )
+#             .limit(1)
+#             .execute()
+#         )
+
+#         role = (
+#             role_result.data[0].get("role", "viewer")
+#             if role_result.data
+#             else "viewer"
+#         )
+
+#         role = str(role).strip().lower()
+
+#         if role not in {"viewer", "editor", "admin"}:
+#             role = "viewer"
+
+#         st.session_state.user_role = role
+
+#         return True, "Login successful."
+
+#     except Exception as exc:
+#         return False, str(exc)
+
+
+# def logout_user():
+#     """
+#     Logout current user and clear local application state.
+#     """
+
+#     try:
+#         base_supabase = get_base_client()
+#         base_supabase.auth.sign_out()
+#     except Exception:
+#         pass
+
+#     for key, value in DEFAULTS.items():
+
+#         # Create a fresh set for pending deletes.
+#         if key == "pending_deletes":
+#             st.session_state[key] = set()
+#         elif key == "pending_updates":
+#             st.session_state[key] = {}
+#         elif key == "pending_inserts":
+#             st.session_state[key] = []
+#         else:
+#             st.session_state[key] = value
+
+#     st.rerun()
+
+
+# # ============================================================
+# # LOGIN SCREEN
+# # ============================================================
+
+# if not st.session_state.session:
+
+#     st.title("🗄️ YgnTBPro Database")
+
+#     st.subheader("Login")
+
+#     with st.form("login_form"):
+
+#         email = st.text_input(
+#             "Email",
+#             autocomplete="email",
+#         )
+
+#         password = st.text_input(
+#             "Password",
+#             type="password",
+#             autocomplete="current-password",
+#         )
+
+#         submitted = st.form_submit_button(
+#             "Login",
+#             type="primary",
+#             use_container_width=True,
+#         )
+
+#     if submitted:
+
+#         if not email.strip() or not password:
+#             st.error("Please enter both email and password.")
+
+#         else:
+
+#             success, message = login_user(
+#                 email,
+#                 password,
+#             )
+
+#             if success:
+#                 st.success(message)
+#                 st.rerun()
+#             else:
+#                 st.error(message)
+
+#     st.stop()
+
+
+# # ============================================================
+# # CURRENT USER / PERMISSIONS
+# # ============================================================
+
+# user_role = (
+#     st.session_state.get("user_role")
+#     or "viewer"
+# ).lower()
+
+# can_edit = user_role in {
+#     "editor",
+#     "admin",
+# }
+
+# can_add = user_role == "admin"
+
+# can_delete = user_role == "admin"
+
+# current_session = st.session_state.session
+
+# current_user = getattr(
+#     current_session,
+#     "user",
+#     None,
+# )
+
+# current_email = (
+#     getattr(current_user, "email", None)
+#     if current_user
+#     else None
+# )
+
+# current_user_id = (
+#     getattr(current_user, "id", None)
+#     if current_user
+#     else None
+# )
+
+
+# # ============================================================
+# # UTILITY FUNCTIONS
+# # ============================================================
+
+# def resolve_column(
+#     columns,
+#     *candidates,
+# ):
+#     """
+#     Return the actual column name matching one of the candidates.
+#     Matching is case-insensitive.
+#     """
+
+#     columns = list(columns)
+
+#     lower_map = {
+#         str(column).lower(): column
+#         for column in columns
+#     }
+
+#     for candidate in candidates:
+
+#         if candidate in columns:
+#             return candidate
+
+#         actual = lower_map.get(
+#             str(candidate).lower()
+#         )
+
+#         if actual is not None:
+#             return actual
+
+#     return None
+
+
+# def values_equal(left, right) -> bool:
+#     """
+#     Robust comparison for pandas/NumPy/date/NaN values.
+#     """
+
+#     if left is None and right is None:
+#         return True
+
+#     try:
+#         if pd.isna(left) and pd.isna(right):
+#             return True
+#     except Exception:
+#         pass
+
+#     try:
+#         return bool(left == right)
+#     except Exception:
+#         return str(left) == str(right)
+
+
+# def clean_value(value):
+#     """
+#     Convert pandas/NumPy values into values suitable for Supabase JSON.
+#     """
+
+#     if value is None:
+#         return None
+
+#     if isinstance(value, pd.Timestamp):
+#         if pd.isna(value):
+#             return None
+#         return value.isoformat()
+
+#     if isinstance(value, datetime):
+#         return value.isoformat()
+
+#     if isinstance(value, date):
+#         return value.isoformat()
+
+#     if isinstance(value, Decimal):
+#         return float(value)
+
+#     if isinstance(value, np.integer):
+#         return int(value)
+
+#     if isinstance(value, np.floating):
+#         if np.isnan(value):
+#             return None
+#         return float(value)
+
+#     if isinstance(value, np.bool_):
+#         return bool(value)
+
+#     if isinstance(value, float):
+#         if np.isnan(value) or np.isinf(value):
+#             return None
+
+#     try:
+#         if pd.isna(value):
+#             return None
+#     except Exception:
+#         pass
+
+#     return value
+
+
+# def make_json_safe(data):
+#     """
+#     Recursively make dictionaries/lists JSON safe.
+#     """
+
+#     if isinstance(data, dict):
+
+#         return {
+#             str(key): make_json_safe(value)
+#             for key, value in data.items()
+#         }
+
+#     if isinstance(data, (list, tuple, set)):
+
+#         return [
+#             make_json_safe(value)
+#             for value in data
+#         ]
+
+#     return clean_value(data)
+
+
+# def dataframe_to_records(df: pd.DataFrame):
+#     """
+#     Convert DataFrame to JSON-safe record dictionaries.
+#     """
+
+#     if df is None or df.empty:
+#         return []
+
+#     records = df.to_dict(
+#         orient="records"
+#     )
+
+#     return make_json_safe(records)
+
+
+# # ============================================================
+# # PENDING CHANGES
+# # ============================================================
+
+# def add_pending_update(
+#     primary_id,
+#     changes: dict,
+# ):
+#     """
+#     Add or merge an UPDATE into pending_updates.
+#     """
+
+#     primary_id = clean_value(primary_id)
+
+#     if primary_id is None:
+#         return
+
+#     if primary_id in st.session_state.pending_deletes:
+#         return
+
+#     if primary_id not in st.session_state.pending_updates:
+#         st.session_state.pending_updates[primary_id] = {}
+
+#     st.session_state.pending_updates[primary_id].update(
+#         make_json_safe(changes)
+#     )
+
+
+# def remove_pending_update(
+#     primary_id,
+# ):
+#     st.session_state.pending_updates.pop(
+#         primary_id,
+#         None,
+#     )
+
+
+# def add_pending_delete(
+#     primary_id,
+# ):
+#     """
+#     Add a DELETE while removing any pending UPDATE for
+#     the same record.
+#     """
+
+#     primary_id = clean_value(primary_id)
+
+#     if primary_id is None:
+#         return
+
+#     st.session_state.pending_deletes.add(
+#         primary_id
+#     )
+
+#     st.session_state.pending_updates.pop(
+#         primary_id,
+#         None,
+#     )
+
+
+# def add_pending_insert(
+#     record: dict,
+# ):
+#     """
+#     Add a new record to pending inserts.
+#     """
+
+#     record = make_json_safe(record)
+
+#     if not record:
+#         return
+
+#     st.session_state.pending_inserts.append(
+#         record
+#     )
+
+
+# def pending_changes_count():
+#     return (
+#         len(st.session_state.pending_updates)
+#         + len(st.session_state.pending_inserts)
+#         + len(st.session_state.pending_deletes)
+#     )
+
+
+# def clear_pending_changes():
+#     st.session_state.pending_updates = {}
+#     st.session_state.pending_inserts = []
+#     st.session_state.pending_deletes = set()
+#     st.session_state.new_row_buffer = []
+
+
+# # ============================================================
+# # SCHEMA
+# # ============================================================
+
+# @st.cache_data(
+#     ttl=600,
+#     show_spinner=False,
+# )
+# def get_table_columns_cached():
+#     """
+#     Get column names using the public/base client.
+
+#     Schema is not user-specific, so a short cache is appropriate.
+#     """
+
+#     client = get_base_client()
+
+#     response = (
+#         client.table(TABLE_NAME)
+#         .select("*")
+#         .limit(1)
+#         .execute()
+#     )
+
+#     data = response.data or []
+
+#     if not data:
+#         return []
+
+#     return list(
+#         data[0].keys()
+#     )
+
+
+# def get_table_columns():
+#     return get_table_columns_cached()
+
+
+# # ============================================================
+# # PAGINATED SUPABASE QUERY
+# # ============================================================
+
+# def fetch_page_from_query(
+#     query_builder,
+#     page: int,
+#     page_size: int,
+# ):
+#     """
+#     Execute a query for exactly one UI page.
+
+#     This prevents the entire table from being sent to Streamlit.
+#     """
+
+#     page = max(
+#         1,
+#         int(page),
+#     )
+
+#     page_size = max(
+#         1,
+#         int(page_size),
+#     )
+
+#     start = (
+#         page - 1
+#     ) * page_size
+
+#     end = (
+#         start
+#         + page_size
+#         - 1
+#     )
+
+#     response = (
+#         query_builder
+#         .range(start, end)
+#         .execute()
+#     )
+
+#     rows = response.data or []
+
+#     return pd.DataFrame(rows)
+
+
+# # ============================================================
+# # FILTER QUERY BUILDER
+# # ============================================================
+
+# def apply_text_filter(
+#     query,
+#     column,
+#     value,
+# ):
+#     """
+#     Case-insensitive contains filter.
+
+#     Uses ilike so users can enter partial values.
+#     """
+
+#     if (
+#         column
+#         and value is not None
+#         and str(value).strip()
+#     ):
+
+#         value = str(value).strip()
+
+#         # Escape characters that have special meaning in
+#         # PostgreSQL LIKE expressions.
+#         value = (
+#             value
+#             .replace("\\", "\\\\")
+#             .replace("%", "\\%")
+#             .replace("_", "\\_")
+#         )
+
+#         query = query.ilike(
+#             column,
+#             f"%{value}%",
+#         )
+
+#     return query
+
+
+# def apply_exact_filter(
+#     query,
+#     column,
+#     value,
+# ):
+#     if (
+#         column
+#         and value is not None
+#         and str(value).strip()
+#     ):
+
+#         query = query.eq(
+#             column,
+#             str(value).strip(),
+#         )
+
+#     return query
+
+
+# def build_filtered_query(
+#     client,
+#     columns,
+#     filters,
+#     count=False,
+# ):
+#     """
+#     Build a server-side filtered query.
+
+#     All filtering occurs in PostgreSQL/PostgREST.
+#     """
+
+#     query = (
+#         client
+#         .table(TABLE_NAME)
+#         .select(
+#             "*",
+#             count="exact" if count else None,
+#         )
+#     )
+
+#     # --------------------------------------------------------
+#     # Patient ID
+#     # --------------------------------------------------------
+
+#     patient_col = resolve_column(
+#         columns,
+#         *PRIMARY_KEY_CANDIDATES,
+#     )
+
+#     patient_id = filters.get(
+#         "patient_id",
+#         "",
+#     )
+
+#     if (
+#         patient_col
+#         and patient_id
+#         and str(patient_id).strip()
+#     ):
+
+#         # PatientID is normally unique, so exact matching is
+#         # substantially faster than loading all IDs.
+#         query = query.eq(
+#             patient_col,
+#             str(patient_id).strip(),
+#         )
+
+#     # --------------------------------------------------------
+#     # Text filters
+#     # --------------------------------------------------------
+
+#     mapping = {
+#         "team": [
+#             "team",
+#             "Team",
+#         ],
+#         "tsp": [
+#             "tsp",
+#             "Tsp",
+#             "TSP",
+#         ],
+#         "approach": [
+#             "approach",
+#             "Approach",
+#         ],
+#         "case": [
+#             "case",
+#             "Case",
+#         ],
+#         "visit_no": [
+#             "visitno",
+#             "Visit_no",
+#             "visit_no",
+#         ],
+#         "sr_no": [
+#             "srno",
+#             "Sr_No",
+#             "sr_no",
+#         ],
+#         "ward_village": [
+#             "wardvillage",
+#             "WardVillage",
+#             "ward_village",
+#         ],
+#     }
+
+#     for filter_name, candidates in mapping.items():
+
+#         column = resolve_column(
+#             columns,
+#             *candidates,
+#         )
+
+#         query = apply_text_filter(
+#             query,
+#             column,
+#             filters.get(
+#                 filter_name,
+#                 "",
+#             ),
+#         )
+
+#     # --------------------------------------------------------
+#     # Date range
+#     # --------------------------------------------------------
+
+#     date_col = resolve_column(
+#         columns,
+#         *DATE_CANDIDATES,
+#     )
+
+#     date_from = filters.get(
+#         "date_from"
+#     )
+
+#     date_to = filters.get(
+#         "date_to"
+#     )
+
+#     if date_col:
+
+#         if date_from:
+#             query = query.gte(
+#                 date_col,
+#                 date_from.isoformat(),
+#             )
+
+#         if date_to:
+#             next_day = (
+#                 date_to
+#                 + timedelta(days=1)
+#             )
+
+#             # Use < next day rather than <= 23:59:59.
+#             query = query.lt(
+#                 date_col,
+#                 next_day.isoformat(),
+#             )
+
+#     # --------------------------------------------------------
+#     # Stable ordering
+#     # --------------------------------------------------------
+
+#     if patient_col:
+#         query = query.order(
+#             patient_col,
+#             desc=True,
+#         )
+
+#     return query
+
+
+# # ============================================================
+# # RECORD COUNT
+# # ============================================================
+
+# def get_filtered_count(
+#     client,
+#     columns,
+#     filters,
+# ):
+#     """
+#     Get exact matching row count.
+
+#     This is a separate request because the actual page query
+#     only needs the visible rows.
+#     """
+
+#     try:
+
+#         query = build_filtered_query(
+#             client=client,
+#             columns=columns,
+#             filters=filters,
+#             count=True,
+#         )
+
+#         response = (
+#             query
+#             .range(0, 0)
+#             .execute()
+#         )
+
+#         return (
+#             response.count
+#             if response.count is not None
+#             else None
+#         )
+
+#     except Exception:
+#         return None
+
+
+# # ============================================================
+# # APPLY PENDING CHANGES TO DISPLAYED PAGE
+# # ============================================================
+
+# def merge_pending_updates_into_page(
+#     df: pd.DataFrame,
+# ):
+#     """
+#     Overlay pending UPDATE values onto the currently displayed
+#     page so edits remain visible after pagination/filter changes.
+#     """
+
+#     if df is None or df.empty:
+#         return df
+
+#     if not st.session_state.pending_updates:
+#         return df
+
+#     primary_col = resolve_column(
+#         df.columns,
+#         *PRIMARY_KEY_CANDIDATES,
+#     )
+
+#     if not primary_col:
+#         return df
+
+#     result = df.copy()
+
+#     for index, row in result.iterrows():
+
+#         primary_id = clean_value(
+#             row.get(primary_col)
+#         )
+
+#         if primary_id in st.session_state.pending_updates:
+
+#             changes = st.session_state.pending_updates[
+#                 primary_id
+#             ]
+
+#             for column, value in changes.items():
+
+#                 if column in result.columns:
+#                     result.at[
+#                         index,
+#                         column,
+#                     ] = value
+
+#     return result
+
+
+# def remove_pending_deleted_rows(
+#     df: pd.DataFrame,
+# ):
+#     """
+#     Do not display records that have been marked for deletion.
+#     """
+
+#     if df is None or df.empty:
+#         return df
+
+#     if not st.session_state.pending_deletes:
+#         return df
+
+#     primary_col = resolve_column(
+#         df.columns,
+#         *PRIMARY_KEY_CANDIDATES,
+#     )
+
+#     if not primary_col:
+#         return df
+
+#     mask = ~df[
+#         primary_col
+#     ].map(clean_value).isin(
+#         st.session_state.pending_deletes
+#     )
+
+#     return df.loc[
+#         mask
+#     ].reset_index(
+#         drop=True
+#     )
+
+
+# # ============================================================
+# # CAPTURE AG GRID EDITS
+# # ============================================================
+
+# def capture_grid_changes(
+#     original_df: pd.DataFrame,
+#     edited_df: pd.DataFrame,
+# ):
+#     """
+#     Compare only the currently displayed page.
+
+#     IMPORTANT:
+#     Missing rows are NOT treated as deletions.
+#     Deletion is explicit through Delete Selected.
+
+#     This is necessary for server-side pagination.
+#     """
+
+#     if (
+#         original_df is None
+#         or edited_df is None
+#         or original_df.empty
+#         or edited_df.empty
+#     ):
+#         return
+
+#     primary_col = resolve_column(
+#         original_df.columns,
+#         *PRIMARY_KEY_CANDIDATES,
+#     )
+
+#     if not primary_col:
+#         return
+
+#     original = original_df.copy()
+#     edited = edited_df.copy()
+
+#     if primary_col not in edited.columns:
+#         return
+
+#     original_index = {}
+
+#     for _, row in original.iterrows():
+
+#         primary_id = clean_value(
+#             row.get(primary_col)
+#         )
+
+#         if primary_id is not None:
+#             original_index[
+#                 primary_id
+#             ] = row
+
+#     for _, row in edited.iterrows():
+
+#         primary_id = clean_value(
+#             row.get(primary_col)
+#         )
+
+#         if primary_id is None:
+#             continue
+
+#         if primary_id not in original_index:
+#             continue
+
+#         original_row = original_index[
+#             primary_id
+#         ]
+
+#         changes = {}
+
+#         for column in edited.columns:
+
+#             if column == primary_col:
+#                 continue
+
+#             if column not in original.columns:
+#                 continue
+
+#             old_value = original_row.get(
+#                 column
+#             )
+
+#             new_value = row.get(
+#                 column
+#             )
+
+#             if not values_equal(
+#                 old_value,
+#                 new_value,
+#             ):
+
+#                 changes[column] = clean_value(
+#                     new_value
+#                 )
+
+#         if changes:
+#             add_pending_update(
+#                 primary_id,
+#                 changes,
+#             )
+
+
+# # ============================================================
+# # AG GRID
+# # ============================================================
+
+# def create_grid_options(
+#     df: pd.DataFrame,
+#     primary_col: str | None,
+#     editable: bool,
+#     selected_ids: set,
+# ):
+#     """
+#     Create optimized AG Grid configuration.
+#     """
+
+#     gb = GridOptionsBuilder.from_dataframe(
+#         df
+#     )
+
+#     gb.configure_default_column(
+#         editable=editable,
+#         resizable=True,
+#         sortable=True,
+#         filter=True,
+#         minWidth=110,
+#     )
+
+#     if primary_col:
+#         gb.configure_column(
+#             primary_col,
+#             editable=False,
+#             pinned="left",
+#             checkboxSelection=can_delete,
+#             headerCheckboxSelection=can_delete,
+#             width=160,
+#         )
+
+#     updated_at_col = resolve_column(
+#         df.columns,
+#         "updated_at",
+#         "Updated_at",
+#         "updatedAt",
+#     )
+
+#     if updated_at_col:
+#         gb.configure_column(
+#             updated_at_col,
+#             editable=False,
+#         )
+
+#     # Keep grid height manageable.
+#     gb.configure_grid_options(
+#         rowHeight=32,
+#         headerHeight=38,
+#         suppressRowClickSelection=False,
+#         enableRangeSelection=True,
+#         pagination=False,
+#         animateRows=False,
+#         suppressColumnVirtualisation=False,
+#         suppressRowVirtualisation=False,
+#         rowBuffer=5,
+#     )
+
+#     if can_delete:
+#         gb.configure_selection(
+#             selection_mode="multiple",
+#             use_checkbox=True,
+#             header_checkbox=True,
+#         )
+
+#     # JavaScript to format nulls consistently.
+#     null_formatter = JsCode(
+#         """
+#         function(params) {
+#             if (params.value === null ||
+#                 params.value === undefined ||
+#                 params.value === "") {
+#                 return "";
+#             }
+#             return params.value;
+#         }
+#         """
+#     )
+
+#     for column in df.columns:
+#         gb.configure_column(
+#             column,
+#             valueFormatter=null_formatter,
+#         )
+
+#     return gb.build()
+
+
+# # ============================================================
+# # FETCH EDITOR PAGE
+# # ============================================================
+
+# def load_editor_page(
+#     client,
+#     columns,
+#     filters,
+#     page,
+#     page_size,
+# ):
+#     """
+#     Load only one page from Supabase.
+#     """
+
+#     query = build_filtered_query(
+#         client=client,
+#         columns=columns,
+#         filters=filters,
+#         count=False,
+#     )
+
+#     df = fetch_page_from_query(
+#         query_builder=query,
+#         page=page,
+#         page_size=page_size,
+#     )
+
+#     if df.empty:
+#         return df
+
+#     df = remove_pending_deleted_rows(
+#         df
+#     )
+
+#     df = merge_pending_updates_into_page(
+#         df
+#     )
+
+#     return df
+
+
+# # ============================================================
+# # SYNC OPERATIONS
+# # ============================================================
+
+# def sync_pending_changes():
+#     """
+#     Apply UPDATE / INSERT / DELETE operations to Supabase.
+
+#     Successful operations are removed from the pending queue.
+#     Failed operations remain pending.
+#     """
+
+#     if pending_changes_count() == 0:
+#         return 0, 0, []
+
+#     client = get_user_client()
+
+#     errors = []
+#     success_count = 0
+#     attempted_count = 0
+
+#     # --------------------------------------------------------
+#     # UPDATE
+#     # --------------------------------------------------------
+
+#     for primary_id, changes in list(
+#         st.session_state.pending_updates.items()
+#     ):
+
+#         attempted_count += 1
+
+#         try:
+
+#             if not changes:
+#                 del st.session_state.pending_updates[
+#                     primary_id
+#                 ]
+#                 continue
+
+#             payload = make_json_safe(
+#                 changes
+#             )
+
+#             (
+#                 client
+#                 .table(TABLE_NAME)
+#                 .update(payload)
+#                 .eq(
+#                     resolve_primary_key_name(),
+#                     primary_id,
+#                 )
+#                 .execute()
+#             )
+
+#             del st.session_state.pending_updates[
+#                 primary_id
+#             ]
+
+#             success_count += 1
+
+#         except Exception as exc:
+
+#             errors.append(
+#                 f"UPDATE {primary_id}: {exc}"
+#             )
+
+#     # --------------------------------------------------------
+#     # INSERT
+#     # --------------------------------------------------------
+
+#     successful_inserts = []
+
+#     for index, record in enumerate(
+#         list(st.session_state.pending_inserts)
+#     ):
+
+#         attempted_count += 1
+
+#         try:
+
+#             payload = make_json_safe(
+#                 record
+#             )
+
+#             if not payload:
+#                 successful_inserts.append(
+#                     index
+#                 )
+#                 continue
+
+#             (
+#                 client
+#                 .table(TABLE_NAME)
+#                 .insert(payload)
+#                 .execute()
+#             )
+
+#             successful_inserts.append(
+#                 index
+#             )
+
+#             success_count += 1
+
+#         except Exception as exc:
+
+#             errors.append(
+#                 f"INSERT row {index + 1}: {exc}"
+#             )
+
+#     if successful_inserts:
+
+#         st.session_state.pending_inserts = [
+#             record
+#             for index, record in enumerate(
+#                 st.session_state.pending_inserts
+#             )
+#             if index not in successful_inserts
+#         ]
+
+#     # --------------------------------------------------------
+#     # DELETE
+#     # --------------------------------------------------------
+
+#     for primary_id in list(
+#         st.session_state.pending_deletes
+#     ):
+
+#         attempted_count += 1
+
+#         try:
+
+#             (
+#                 client
+#                 .table(TABLE_NAME)
+#                 .delete()
+#                 .eq(
+#                     resolve_primary_key_name(),
+#                     primary_id,
+#                 )
+#                 .execute()
+#             )
+
+#             st.session_state.pending_deletes.remove(
+#                 primary_id
+#             )
+
+#             success_count += 1
+
+#         except Exception as exc:
+
+#             errors.append(
+#                 f"DELETE {primary_id}: {exc}"
+#             )
+
+#     return (
+#         success_count,
+#         attempted_count,
+#         errors,
+#     )
+
+
+# # ============================================================
+# # PRIMARY KEY RESOLUTION
+# # ============================================================
+
+# def resolve_primary_key_name():
+#     columns = get_table_columns()
+
+#     primary_col = resolve_column(
+#         columns,
+#         *PRIMARY_KEY_CANDIDATES,
+#     )
+
+#     if not primary_col:
+#         raise RuntimeError(
+#             "PatientID primary key column was not found."
+#         )
+
+#     return primary_col
+
+
+# # ============================================================
+# # HEADER
+# # ============================================================
+
+# header_col1, header_col2, header_col3 = st.columns(
+#     [5, 2, 1]
+# )
+
+# with header_col1:
+
+#     st.title("🗄️ YgnTBPro Database")
+
+# with header_col2:
+
+#     st.caption(
+#         f"User: {current_email or 'Unknown'}"
+#     )
+
+#     st.caption(
+#         f"Role: **{user_role.upper()}**"
+#     )
+
+# with header_col3:
+
+#     if st.button(
+#         "Logout",
+#         use_container_width=True,
+#     ):
+#         logout_user()
+
+
+# # ============================================================
+# # ROLE INFORMATION
+# # ============================================================
+
+# if user_role == "viewer":
+
+#     st.info(
+#         "Viewer mode: records can be viewed and exported, "
+#         "but cannot be changed."
+#     )
+
+# elif user_role == "editor":
+
+#     st.info(
+#         "Editor mode: existing records can be edited. "
+#         "Adding and deleting records requires Admin permission."
+#     )
+
+# elif user_role == "admin":
+
+#     st.success(
+#         "Admin mode: edit, add and delete permissions enabled."
+#     )
+
+
+# # ============================================================
+# # PENDING CHANGES SUMMARY
+# # ============================================================
+
+# pending_updates_count = len(
+#     st.session_state.pending_updates
+# )
+
+# pending_inserts_count = len(
+#     st.session_state.pending_inserts
+# )
+
+# pending_deletes_count = len(
+#     st.session_state.pending_deletes
+# )
+
+# total_pending = (
+#     pending_updates_count
+#     + pending_inserts_count
+#     + pending_deletes_count
+# )
+
+
+# if total_pending:
+
+#     c1, c2, c3, c4, c5 = st.columns(
+#         [1, 1, 1, 1.3, 1]
+#     )
+
+#     with c1:
+#         st.metric(
+#             "Pending",
+#             total_pending,
+#         )
+
+#     with c2:
+#         st.metric(
+#             "Updates",
+#             pending_updates_count,
+#         )
+
+#     with c3:
+#         st.metric(
+#             "Inserts",
+#             pending_inserts_count,
+#         )
+
+#     with c4:
+#         st.metric(
+#             "Deletes",
+#             pending_deletes_count,
+#         )
+
+#     with c5:
+
+#         if st.button(
+#             "Discard All",
+#             use_container_width=True,
+#         ):
+
+#             clear_pending_changes()
+
+#             st.rerun()
+
+
+# # ============================================================
+# # LOAD SCHEMA
+# # ============================================================
+
+# try:
+
+#     table_columns = get_table_columns()
+
+# except Exception as exc:
+
+#     st.error(
+#         f"Unable to read {TABLE_NAME} schema: {exc}"
+#     )
+#     st.stop()
+
+
+# if not table_columns:
+
+#     st.error(
+#         f"No columns were found in {TABLE_NAME}."
+#     )
+#     st.stop()
+
+
+# primary_col = resolve_column(
+#     table_columns,
+#     *PRIMARY_KEY_CANDIDATES,
+# )
+
+# date_col = resolve_column(
+#     table_columns,
+#     *DATE_CANDIDATES,
+# )
+
+
+# # ============================================================
+# # MAIN TABS
+# # ============================================================
+
+# editor_tab, explorer_tab = st.tabs(
+#     [
+#         "✏️ Database Editor",
+#         "🔎 Explorer",
+#     ]
+# )
+
+
+# # ============================================================
+# # EDITOR TAB
+# # ============================================================
+
+# with editor_tab:
+
+#     st.subheader("Database Editor")
+
+#     # --------------------------------------------------------
+#     # FILTER PANEL
+#     # --------------------------------------------------------
+
+#     with st.expander(
+#         "🔍 Filters",
+#         expanded=True,
+#     ):
+
+#         f1, f2, f3, f4 = st.columns(4)
+
+#         with f1:
+
+#             patient_id_filter = st.text_input(
+#                 "Patient ID",
+#                 key="filter_patient_id",
+#                 placeholder="Exact PatientID",
+#             )
+
+#             team_filter = st.text_input(
+#                 "Team",
+#                 key="filter_team",
+#                 placeholder="e.g. 5",
+#             )
+
+#         with f2:
+
+#             tsp_filter = st.text_input(
+#                 "TSP",
+#                 key="filter_tsp",
+#                 placeholder="e.g. SDG",
+#             )
+
+#             approach_filter = st.text_input(
+#                 "Approach",
+#                 key="filter_approach",
+#                 placeholder="PPM / DC / Mobile Visit",
+#             )
+
+#         with f3:
+
+#             case_filter = st.text_input(
+#                 "Case",
+#                 key="filter_case",
+#                 placeholder="e.g. TB",
+#             )
+
+#             visit_no_filter = st.text_input(
+#                 "Visit No",
+#                 key="filter_visit_no",
+#             )
+
+#         with f4:
+
+#             sr_no_filter = st.text_input(
+#                 "SR No",
+#                 key="filter_sr_no",
+#             )
+
+#             ward_village_filter = st.text_input(
+#                 "Ward / Village",
+#                 key="filter_ward_village",
+#             )
+
+#         d1, d2 = st.columns(2)
+
+#         with d1:
+
+#             date_from = st.date_input(
+#                 "Date From",
+#                 value=None,
+#                 key="filter_date_from",
+#             )
+
+#         with d2:
+
+#             date_to = st.date_input(
+#                 "Date To",
+#                 value=None,
+#                 key="filter_date_to",
+#             )
+
+#         if (
+#             date_from
+#             and date_to
+#             and date_from > date_to
+#         ):
+
+#             st.error(
+#                 "Date From cannot be later than Date To."
+#             )
+
+#         # ----------------------------------------------------
+#         # ACTIONS
+#         # ----------------------------------------------------
+
+#         a1, a2, a3 = st.columns(
+#             [1.4, 1, 1]
+#         )
+
+#         with a1:
+
+#             apply_filters = st.button(
+#                 "🔄 Load / Apply Filters",
+#                 type="primary",
+#                 use_container_width=True,
+#             )
+
+#         with a2:
+
+#             reset_filters = st.button(
+#                 "↺ Reset Filters",
+#                 use_container_width=True,
+#             )
+
+#         with a3:
+
+#             if st.button(
+#                 "⟳ Refresh",
+#                 use_container_width=True,
+#             ):
+
+#                 st.session_state.editor_query_version += 1
+#                 st.rerun()
+
+#     # --------------------------------------------------------
+#     # RESET FILTERS
+#     # --------------------------------------------------------
+
+#     if reset_filters:
+
+#         for key in [
+#             "filter_patient_id",
+#             "filter_team",
+#             "filter_tsp",
+#             "filter_approach",
+#             "filter_case",
+#             "filter_visit_no",
+#             "filter_sr_no",
+#             "filter_ward_village",
+#         ]:
+
+#             st.session_state[key] = ""
+
+#         st.session_state.filter_date_from = None
+#         st.session_state.filter_date_to = None
+
+#         # IMPORTANT:
+#         # Pending changes are NOT cleared.
+#         st.session_state.editor_page = 1
+
+#         st.session_state.editor_filters = {
+#             "patient_id": "",
+#             "team": "",
+#             "tsp": "",
+#             "approach": "",
+#             "case": "",
+#             "visit_no": "",
+#             "sr_no": "",
+#             "ward_village": "",
+#             "date_from": None,
+#             "date_to": None,
+#         }
+
+#         st.session_state.editor_loaded = True
+#         st.session_state.editor_query_version += 1
+
+#         st.rerun()
+
+#     # --------------------------------------------------------
+#     # APPLY FILTERS
+#     # --------------------------------------------------------
+
+#     if apply_filters:
+
+#         if (
+#             date_from
+#             and date_to
+#             and date_from > date_to
+#         ):
+
+#             st.error(
+#                 "Please correct the date range."
+#             )
+
+#         else:
+
+#             st.session_state.editor_filters = {
+#                 "patient_id": patient_id_filter.strip(),
+#                 "team": team_filter.strip(),
+#                 "tsp": tsp_filter.strip(),
+#                 "approach": approach_filter.strip(),
+#                 "case": case_filter.strip(),
+#                 "visit_no": visit_no_filter.strip(),
+#                 "sr_no": sr_no_filter.strip(),
+#                 "ward_village": ward_village_filter.strip(),
+#                 "date_from": date_from,
+#                 "date_to": date_to,
+#             }
+
+#             st.session_state.editor_page = 1
+#             st.session_state.editor_loaded = True
+#             st.session_state.editor_query_version += 1
+
+#             st.rerun()
+
+#     # --------------------------------------------------------
+#     # DEFAULT FILTER STATE
+#     # --------------------------------------------------------
+
+#     if st.session_state.editor_filters is None:
+
+#         st.session_state.editor_filters = {
+#             "patient_id": "",
+#             "team": "",
+#             "tsp": "",
+#             "approach": "",
+#             "case": "",
+#             "visit_no": "",
+#             "sr_no": "",
+#             "ward_village": "",
+#             "date_from": None,
+#             "date_to": None,
+#         }
+
+#     filters = st.session_state.editor_filters
+
+#     # --------------------------------------------------------
+#     # FETCH CURRENT PAGE
+#     # --------------------------------------------------------
+
+#     if st.session_state.editor_loaded:
+
+#         try:
+
+#             user_client = get_user_client()
+
+#             with st.spinner(
+#                 "Loading records..."
+#             ):
+
+#                 total_count = get_filtered_count(
+#                     client=user_client,
+#                     columns=table_columns,
+#                     filters=filters,
+#                 )
+
+#                 editor_page = st.session_state.editor_page
+
+#                 page_size = st.session_state.editor_page_size
+
+#                 editor_df = load_editor_page(
+#                     client=user_client,
+#                     columns=table_columns,
+#                     filters=filters,
+#                     page=editor_page,
+#                     page_size=page_size,
+#                 )
+
+#         except Exception as exc:
+
+#             st.error(
+#                 f"Unable to load records: {exc}"
+#             )
+
+#             editor_df = pd.DataFrame()
+#             total_count = None
+
+#         # ----------------------------------------------------
+#         # PAGE CALCULATION
+#         # ----------------------------------------------------
+
+#         if total_count is not None:
+
+#             total_pages = max(
+#                 1,
+#                 int(
+#                     np.ceil(
+#                         total_count
+#                         / page_size
+#                     )
+#                 ),
+#             )
+
+#         else:
+
+#             total_pages = (
+#                 max(
+#                     1,
+#                     editor_page,
+#                 )
+#                 if len(editor_df) >= page_size
+#                 else editor_page
+#             )
+
+#         # ----------------------------------------------------
+#         # PAGE NAVIGATION
+#         # ----------------------------------------------------
+
+#         nav1, nav2, nav3, nav4, nav5 = st.columns(
+#             [1, 1, 2, 1, 1]
+#         )
+
+#         with nav1:
+
+#             previous_page = st.button(
+#                 "← Previous",
+#                 disabled=editor_page <= 1,
+#                 use_container_width=True,
+#             )
+
+#         with nav2:
+
+#             next_disabled = (
+#                 editor_page >= total_pages
+#                 if total_count is not None
+#                 else len(editor_df) < page_size
+#             )
+
+#             next_page = st.button(
+#                 "Next →",
+#                 disabled=next_disabled,
+#                 use_container_width=True,
+#             )
+
+#         if previous_page:
+
+#             st.session_state.editor_page = max(
+#                 1,
+#                 editor_page - 1,
+#             )
+
+#             st.rerun()
+
+#         if next_page:
+
+#             st.session_state.editor_page = (
+#                 editor_page + 1
+#             )
+
+#             st.rerun()
+
+#         with nav3:
+
+#             if total_count is not None:
+
+#                 first_row = (
+#                     (editor_page - 1)
+#                     * page_size
+#                     + 1
+#                 )
+
+#                 last_row = min(
+#                     editor_page * page_size,
+#                     total_count,
+#                 )
+
+#                 st.caption(
+#                     f"Rows {first_row:,}–{last_row:,} "
+#                     f"of {total_count:,}"
+#                 )
+
+#             else:
+
+#                 st.caption(
+#                     f"Page {editor_page}"
+#                 )
+
+#         with nav4:
+
+#             new_page = st.number_input(
+#                 "Page",
+#                 min_value=1,
+#                 max_value=max(
+#                     1,
+#                     total_pages,
+#                 ),
+#                 value=editor_page,
+#                 step=1,
+#                 label_visibility="collapsed",
+#             )
+
+#         with nav5:
+
+#             page_sizes = [
+#                 100,
+#                 300,
+#                 500,
+#                 1000,
+#             ]
+
+#             selected_page_size = st.selectbox(
+#                 "Rows",
+#                 page_sizes,
+#                 index=page_sizes.index(
+#                     st.session_state.editor_page_size
+#                 )
+#                 if st.session_state.editor_page_size
+#                 in page_sizes
+#                 else 1,
+#                 label_visibility="collapsed",
+#             )
+
+#         if new_page != editor_page:
+
+#             st.session_state.editor_page = int(
+#                 new_page
+#             )
+
+#             st.rerun()
+
+#         if selected_page_size != st.session_state.editor_page_size:
+
+#             st.session_state.editor_page_size = (
+#                 selected_page_size
+#             )
+
+#             st.session_state.editor_page = 1
+
+#             st.rerun()
+
+#         # ----------------------------------------------------
+#         # EDITOR
+#         # ----------------------------------------------------
+
+#         if editor_df.empty:
+
+#             st.info(
+#                 "No records found for the selected filters."
+#             )
+
+#         else:
+
+#             # Keep an immutable snapshot of the currently
+#             # displayed page.
+#             original_page_df = editor_df.copy()
+
+#             st.caption(
+#                 "Edit cells directly. Changes remain pending "
+#                 "until you press Sync."
+#             )
+
+#             grid_options = create_grid_options(
+#                 df=editor_df,
+#                 primary_col=primary_col,
+#                 editable=can_edit,
+#                 selected_ids=set(),
+#             )
+
+#             grid_result = AgGrid(
+#                 editor_df,
+#                 gridOptions=grid_options,
+#                 data_return_mode=DataReturnMode.AS_INPUT,
+#                 update_mode=(
+#                     GridUpdateMode.VALUE_CHANGED
+#                     | GridUpdateMode.SELECTION_CHANGED
+#                 ),
+#                 fit_columns_on_grid_load=False,
+#                 allow_unsafe_jscode=True,
+#                 enable_enterprise_modules=False,
+#                 height=650,
+#                 theme="streamlit",
+#                 key=(
+#                     f"editor_grid_"
+#                     f"{st.session_state.editor_query_version}_"
+#                     f"{editor_page}_"
+#                     f"{st.session_state.editor_page_size}"
+#                 ),
+#             )
+
+#             edited_page_df = grid_result.get(
+#                 "data",
+#                 editor_df,
+#             )
+
+#             # ------------------------------------------------
+#             # Capture edits
+#             # ------------------------------------------------
+
+#             if can_edit:
+
+#                 capture_grid_changes(
+#                     original_df=original_page_df,
+#                     edited_df=edited_page_df,
+#                 )
+
+#             # ------------------------------------------------
+#             # Selected rows
+#             # ------------------------------------------------
+
+#             selected_rows = grid_result.get(
+#                 "selected_rows",
+#                 [],
+#             )
+
+#             if selected_rows is None:
+#                 selected_rows = []
+
+#             selected_ids = []
+
+#             for row in selected_rows:
+
+#                 selected_id = clean_value(
+#                     row.get(primary_col)
+#                     if primary_col
+#                     else None
+#                 )
+
+#                 if selected_id is not None:
+#                     selected_ids.append(
+#                         selected_id
+#                     )
+
+#             # ------------------------------------------------
+#             # Delete selected
+#             # ------------------------------------------------
+
+#             if can_delete:
+
+#                 if st.button(
+#                     f"🗑️ Delete Selected "
+#                     f"({len(selected_ids)})",
+#                     disabled=not selected_ids,
+#                     type="secondary",
+#                 ):
+
+#                     for selected_id in selected_ids:
+#                         add_pending_delete(
+#                             selected_id
+#                         )
+
+#                     st.success(
+#                         f"{len(selected_ids)} record(s) "
+#                         "marked for deletion."
+#                     )
+
+#                     st.rerun()
+
+#     # ========================================================
+#     # ADD NEW ROW
+#     # ========================================================
+
+#     if can_add:
+
+#         st.divider()
+
+#         with st.expander(
+#             "➕ Add New Record",
+#             expanded=False,
+#         ):
+
+#             st.caption(
+#                 "Enter values for a new record. "
+#                 "The row is not written to Supabase until Sync."
+#             )
+
+#             # Use all table columns, but avoid automatic fields.
+#             editable_insert_columns = [
+#                 column
+#                 for column in table_columns
+#                 if column.lower()
+#                 not in {
+#                     "updated_at",
+#                     "created_at",
+#                 }
+#             ]
+
+#             if primary_col in editable_insert_columns:
+
+#                 st.caption(
+#                     f"{primary_col} should normally be entered "
+#                     "if it is not database-generated."
+#                 )
+
+#             insert_values = {}
+
+#             # 3-column layout makes a large schema more compact.
+#             insert_columns = st.columns(3)
+
+#             for index, column in enumerate(
+#                 editable_insert_columns
+#             ):
+
+#                 with insert_columns[
+#                     index % 3
+#                 ]:
+
+#                     insert_values[column] = st.text_input(
+#                         column,
+#                         key=f"new_record_{column}",
+#                     )
+
+#             if st.button(
+#                 "Add to Pending Inserts",
+#                 type="primary",
+#                 use_container_width=True,
+#             ):
+
+#                 record = {}
+
+#                 for column, value in insert_values.items():
+
+#                     if (
+#                         value is not None
+#                         and str(value).strip() != ""
+#                     ):
+
+#                         record[column] = value
+
+#                 if not record:
+
+#                     st.warning(
+#                         "Please enter at least one value."
+#                     )
+
+#                 else:
+
+#                     add_pending_insert(
+#                         record
+#                     )
+
+#                     # Clear widgets for next new row.
+#                     for column in editable_insert_columns:
+
+#                         key = f"new_record_{column}"
+
+#                         if key in st.session_state:
+#                             st.session_state[key] = ""
+
+#                     st.success(
+#                         "New record added to pending inserts."
+#                     )
+
+#                     st.rerun()
+
+#     # ========================================================
+#     # PENDING CHANGE PREVIEW
+#     # ========================================================
+
+#     if pending_changes_count():
+
+#         st.divider()
+
+#         st.subheader(
+#             "Pending Changes"
+#         )
+
+#         # ----------------------------------------------------
+#         # Updates
+#         # ----------------------------------------------------
+
+#         if st.session_state.pending_updates:
+
+#             st.markdown(
+#                 f"**UPDATE — "
+#                 f"{len(st.session_state.pending_updates):,} record(s)**"
+#             )
+
+#             update_preview = []
+
+#             for primary_id, changes in (
+#                 st.session_state.pending_updates.items()
+#             ):
+
+#                 row = {
+#                     "Action": "UPDATE",
+#                     primary_col or "PatientID": primary_id,
+#                     "Changes": "; ".join(
+#                         f"{key}={value}"
+#                         for key, value in changes.items()
+#                     ),
+#                 }
+
+#                 update_preview.append(
+#                     row
+#                 )
+
+#             st.dataframe(
+#                 pd.DataFrame(update_preview),
+#                 use_container_width=True,
+#                 hide_index=True,
+#             )
+
+#         # ----------------------------------------------------
+#         # Inserts
+#         # ----------------------------------------------------
+
+#         if st.session_state.pending_inserts:
+
+#             st.markdown(
+#                 f"**INSERT — "
+#                 f"{len(st.session_state.pending_inserts):,} record(s)**"
+#             )
+
+#             insert_preview = pd.DataFrame(
+#                 st.session_state.pending_inserts
+#             )
+
+#             st.dataframe(
+#                 insert_preview,
+#                 use_container_width=True,
+#                 hide_index=True,
+#             )
+
+#         # ----------------------------------------------------
+#         # Deletes
+#         # ----------------------------------------------------
+
+#         if st.session_state.pending_deletes:
+
+#             st.markdown(
+#                 f"**DELETE — "
+#                 f"{len(st.session_state.pending_deletes):,} record(s)**"
+#             )
+
+#             delete_preview = pd.DataFrame(
+#                 {
+#                     primary_col or "PatientID":
+#                         list(
+#                             st.session_state.pending_deletes
+#                         )
+#                 }
+#             )
+
+#             st.dataframe(
+#                 delete_preview,
+#                 use_container_width=True,
+#                 hide_index=True,
+#             )
+
+#         # ----------------------------------------------------
+#         # SYNC
+#         # ----------------------------------------------------
+
+#         sync_col1, sync_col2 = st.columns(
+#             [2, 1]
+#         )
+
+#         with sync_col1:
+
+#             if st.button(
+#                 f"💾 Sync All Changes ({total_pending})",
+#                 type="primary",
+#                 use_container_width=True,
+#             ):
+
+#                 with st.spinner(
+#                     "Synchronizing changes..."
+#                 ):
+
+#                     try:
+
+#                         (
+#                             success_count,
+#                             attempted_count,
+#                             errors,
+#                         ) = sync_pending_changes()
+
+#                         if errors:
+
+#                             st.warning(
+#                                 f"{success_count} operation(s) "
+#                                 "completed, but some operations failed."
+#                             )
+
+#                             for error in errors:
+#                                 st.error(error)
+
+#                         else:
+
+#                             st.success(
+#                                 f"{success_count} operation(s) "
+#                                 "synchronized successfully."
+#                             )
+
+#                         if success_count:
+
+#                             st.session_state.editor_query_version += 1
+
+#                             st.rerun()
+
+#                     except Exception as exc:
+
+#                         st.error(
+#                             f"Synchronization failed: {exc}"
+#                         )
+
+#         with sync_col2:
+
+#             if st.button(
+#                 "Discard",
+#                 use_container_width=True,
+#             ):
+
+#                 clear_pending_changes()
+
+#                 st.rerun()
+
+
+# # ============================================================
+# # EXPLORER TAB
+# # ============================================================
+
+# with explorer_tab:
+
+#     st.subheader(
+#         "🔎 Database Explorer"
+#     )
+
+#     st.caption(
+#         "Explorer uses server-side filtering and pagination. "
+#         "It does not load the complete table into the browser."
+#     )
+
+#     # --------------------------------------------------------
+#     # Explorer filters
+#     # --------------------------------------------------------
+
+#     with st.expander(
+#         "Explorer Filters",
+#         expanded=True,
+#     ):
+
+#         e1, e2, e3, e4 = st.columns(4)
+
+#         with e1:
+
+#             explorer_keyword = st.text_input(
+#                 "Keyword",
+#                 placeholder="Search PatientID or other fields",
+#                 key="explorer_keyword",
+#             )
+
+#         with e2:
+
+#             explorer_column = st.selectbox(
+#                 "Search Column",
+#                 [
+#                     "All columns",
+#                     *table_columns,
+#                 ],
+#                 key="explorer_column",
+#             )
+
+#         with e3:
+
+#             explorer_date_from = st.date_input(
+#                 "Date From",
+#                 value=None,
+#                 key="explorer_date_from",
+#             )
+
+#         with e4:
+
+#             explorer_date_to = st.date_input(
+#                 "Date To",
+#                 value=None,
+#                 key="explorer_date_to",
+#             )
+
+#         if st.button(
+#             "🔎 Search",
+#             type="primary",
+#             use_container_width=True,
+#         ):
+
+#             st.session_state.explorer_query_version += 1
+#             st.rerun()
+
+#     # --------------------------------------------------------
+#     # Explorer query
+#     # --------------------------------------------------------
+
+#     explorer_client = get_user_client()
+
+#     explorer_query = (
+#         explorer_client
+#         .table(TABLE_NAME)
+#         .select("*")
+#     )
+
+#     # Date filters
+#     if date_col:
+
+#         if explorer_date_from:
+
+#             explorer_query = explorer_query.gte(
+#                 date_col,
+#                 explorer_date_from.isoformat(),
+#             )
+
+#         if explorer_date_to:
+
+#             explorer_query = explorer_query.lt(
+#                 date_col,
+#                 (
+#                     explorer_date_to
+#                     + timedelta(days=1)
+#                 ).isoformat(),
+#             )
+
+#     # Keyword
+#     if explorer_keyword.strip():
+
+#         keyword = (
+#             explorer_keyword
+#             .strip()
+#             .replace("%", "\\%")
+#             .replace("_", "\\_")
+#         )
+
+#         if (
+#             explorer_column != "All columns"
+#             and explorer_column in table_columns
+#         ):
+
+#             explorer_query = explorer_query.ilike(
+#                 explorer_column,
+#                 f"%{keyword}%",
+#             )
+
+#         else:
+
+#             # Search selected practical columns instead of
+#             # generating a very large OR expression across
+#             # all ~150 columns.
+#             searchable_columns = [
+#                 column
+#                 for column in [
+#                     primary_col,
+#                     resolve_column(
+#                         table_columns,
+#                         "tsp",
+#                         "Tsp",
+#                         "TSP",
+#                     ),
+#                     resolve_column(
+#                         table_columns,
+#                         "approach",
+#                         "Approach",
+#                     ),
+#                     resolve_column(
+#                         table_columns,
+#                         "team",
+#                         "Team",
+#                     ),
+#                     resolve_column(
+#                         table_columns,
+#                         "case",
+#                         "Case",
+#                     ),
+#                     resolve_column(
+#                         table_columns,
+#                         "wardvillage",
+#                         "WardVillage",
+#                     ),
+#                 ]
+#                 if column
+#             ]
+
+#             if searchable_columns:
+
+#                 or_conditions = ",".join(
+#                     f"{column}.ilike.%{keyword}%"
+#                     for column in searchable_columns
+#                 )
+
+#                 explorer_query = explorer_query.or_(
+#                     or_conditions
+#                 )
+
+#     if primary_col:
+
+#         explorer_query = explorer_query.order(
+#             primary_col,
+#             desc=True,
+#         )
+
+#     # --------------------------------------------------------
+#     # Explorer display query
+#     # --------------------------------------------------------
+
+#     try:
+
+#         explorer_response = (
+#             explorer_query
+#             .range(
+#                 0,
+#                 EXPLORER_DISPLAY_LIMIT - 1,
+#             )
+#             .execute()
+#         )
+
+#         explorer_df = pd.DataFrame(
+#             explorer_response.data or []
+#         )
+
+#     except Exception as exc:
+
+#         st.error(
+#             f"Explorer query failed: {exc}"
+#         )
+
+#         explorer_df = pd.DataFrame()
+
+#     # --------------------------------------------------------
+#     # Display
+#     # --------------------------------------------------------
+
+#     if explorer_df.empty:
+
+#         st.info(
+#             "No records found."
+#         )
+
+#     else:
+
+#         st.success(
+#             f"Showing up to "
+#             f"{EXPLORER_DISPLAY_LIMIT:,} matching records."
+#         )
+
+#         st.dataframe(
+#             explorer_df,
+#             use_container_width=True,
+#             hide_index=True,
+#             height=650,
+#         )
+
+#         # ----------------------------------------------------
+#         # CSV EXPORT
+#         # ----------------------------------------------------
+
+#         st.divider()
+
+#         st.subheader(
+#             "CSV Export"
+#         )
+
+#         st.caption(
+#             "Export uses the current Explorer filters. "
+#             "Only the export operation retrieves all matching rows."
+#         )
+
+#         if st.button(
+#             "⬇️ Prepare CSV Export",
+#             use_container_width=True,
+#         ):
+
+#             try:
+
+#                 rows = []
+
+#                 start = 0
+
+#                 while True:
+
+#                     end = (
+#                         start
+#                         + CSV_BATCH_SIZE
+#                         - 1
+#                     )
+
+#                     response = (
+#                         explorer_query
+#                         .range(
+#                             start,
+#                             end,
+#                         )
+#                         .execute()
+#                     )
+
+#                     batch = response.data or []
+
+#                     if not batch:
+#                         break
+
+#                     rows.extend(
+#                         batch
+#                     )
+
+#                     if len(batch) < CSV_BATCH_SIZE:
+#                         break
+
+#                     start += CSV_BATCH_SIZE
+
+#                 export_df = pd.DataFrame(
+#                     rows
+#                 )
+
+#                 csv_data = export_df.to_csv(
+#                     index=False
+#                 ).encode(
+#                     "utf-8-sig"
+#                 )
+
+#                 st.download_button(
+#                     label=(
+#                         f"⬇️ Download CSV "
+#                         f"({len(export_df):,} rows)"
+#                     ),
+#                     data=csv_data,
+#                     file_name=(
+#                         f"{TABLE_NAME}_export_"
+#                         f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+#                     ),
+#                     mime="text/csv",
+#                     use_container_width=True,
+#                 )
+
+#             except Exception as exc:
+
+#                 st.error(
+#                     f"CSV export failed: {exc}"
+#                 )
+
+
+# # ============================================================
+# # FOOTER
+# # ============================================================
+
+# st.divider()
+
+# footer_col1, footer_col2 = st.columns(2)
+
+# with footer_col1:
+
+#     st.caption(
+#         f"Table: `{TABLE_NAME}`"
+#     )
+
+# with footer_col2:
+
+#     st.caption(
+#         f"Authenticated user: "
+#         f"{current_email or 'Unknown'}"
+#     )
+
+import os
+import math
+from datetime import date, timedelta
 import pandas as pd
 import streamlit as st
-
 from supabase import Client, create_client
 
-from st_aggrid import (
-    AgGrid,
-    DataReturnMode,
-    GridOptionsBuilder,
-    GridUpdateMode,
-    JsCode,
+from functions import (
+    PRIMARY_COLUMNS,
+    DATE_COLUMNS,
+    functionGetDataFromTable,
+    fetch_supabase_by_ids,
+    fetch_all_patient_ids_only,
+    align_dataframe_columns,
+    clean_and_assign_dtypes,
+    compare_data_fast,
+    serialize_dataframe_for_supabase,
 )
 
-
 # ============================================================
-# STREAMLIT PAGE CONFIG
+# 1. CONFIGURATION & PAGE SETUP
 # ============================================================
 
 st.set_page_config(
-    page_title="YgnTBPro Database",
-    page_icon="🗄️",
+    page_title="YgnTBPro Database Management System",
+    page_icon="🩺",
     layout="wide",
 )
 
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
+SUPABASE_URL = st.secrets.get(
+    "SUPABASE_URL_ygntbpro",
+    st.secrets.get("SUPABASE_URL", os.getenv("SUPABASE_URL_ygntbpro", os.getenv("SUPABASE_URL", ""))),
+)
+SUPABASE_KEY = st.secrets.get(
+    "SUPABASE_KEY_ygntbpro",
+    st.secrets.get("SUPABASE_KEY", os.getenv("SUPABASE_KEY_ygntbpro", os.getenv("SUPABASE_KEY", ""))),
+)
 
 TABLE_NAME = "ygntbpro"
-ROLE_TABLE = "user_roles"
-
-PRIMARY_KEY_CANDIDATES = [
-    "PatientID",
-    "patientid",
-    "patient_id",
-]
-
-DATE_CANDIDATES = [
-    "Date",
-    "date",
-]
-
-# Server request size.
-# This is NOT the maximum number of records in the database.
-BATCH_SIZE = 1000
-
-# Number of rows rendered in AG Grid at one time.
-EDITOR_PAGE_SIZE = 300
-
-# Explorer display limit.
-EXPLORER_DISPLAY_LIMIT = 1000
-
-# Number of records requested for CSV export per batch.
-CSV_BATCH_SIZE = 1000
-
-
-# ============================================================
-# SESSION STATE
-# ============================================================
-
-DEFAULTS = {
-    "session": None,
-    "user_role": None,
-
-    # Editor
-    "editor_loaded": False,
-    "editor_query_version": 0,
-    "editor_page": 1,
-    "editor_page_size": EDITOR_PAGE_SIZE,
-
-    # Current loaded editor filters
-    "editor_filters": None,
-
-    # Pending changes
-    "pending_updates": {},
-    "pending_inserts": [],
-    "pending_deletes": set(),
-
-    # New rows
-    "new_row_buffer": [],
-
-    # UI
-    "active_tab": "Editor",
-    "explorer_query_version": 0,
-
-    # Prevent repeated login/error messages
-    "login_message": None,
-}
-
-
-for key, default_value in DEFAULTS.items():
-    if key not in st.session_state:
-        st.session_state[key] = default_value
-
-
-# ============================================================
-# ENVIRONMENT / SECRETS
-# ============================================================
-
-def get_secret(name: str, default: str | None = None) -> str | None:
-    """
-    Read a configuration value from Streamlit secrets first,
-    then environment variables.
-    """
-
-    try:
-        value = st.secrets.get(name)
-        if value:
-            return str(value)
-    except Exception:
-        pass
-
-    return os.getenv(name, default)
-
-
-SUPABASE_URL = (
-    get_secret("SUPABASE_URL_ygntbpro")
-    or get_secret("SUPABASE_URL")
-)
-
-SUPABASE_KEY = (
-    get_secret("SUPABASE_KEY_ygntbpro")
-    or get_secret("SUPABASE_KEY")
-)
-
-
-# ============================================================
-# BASIC VALIDATION
-# ============================================================
+TARGET_TABLE = "target"
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    st.error(
-        "Supabase configuration is missing. "
-        "Please configure SUPABASE_URL_ygntbpro and "
-        "SUPABASE_KEY_ygntbpro in Streamlit secrets."
-    )
+    st.error("Supabase credentials missing! Configure `SUPABASE_URL_ygntbpro` and `SUPABASE_KEY_ygntbpro` in Secrets.")
     st.stop()
 
 
 # ============================================================
-# SUPABASE CLIENT
+# 2. SUPABASE CLIENTS & SESSION STATE
 # ============================================================
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource
 def get_base_client() -> Client:
-    """
-    Create the base Supabase client.
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    This client is used only for operations that do not need
-    the logged-in user's session.
-    """
-
-    return create_client(
-        SUPABASE_URL,
-        SUPABASE_KEY,
-    )
-
+base_supabase = get_base_client()
 
 def get_user_client() -> Client:
-    """
-    Create an authenticated Supabase client using the current
-    Streamlit session.
-
-    IMPORTANT:
-    Do not cache this client because it contains user-specific
-    authentication state.
-    """
-
     session = st.session_state.get("session")
-
     if not session:
-        raise RuntimeError("No authenticated session.")
+        return base_supabase
 
-    client = create_client(
-        SUPABASE_URL,
-        SUPABASE_KEY,
-    )
-
+    client = create_client(SUPABASE_URL, SUPABASE_KEY)
     access_token = getattr(session, "access_token", None)
     refresh_token = getattr(session, "refresh_token", None)
 
-    if not access_token:
-        raise RuntimeError("Authenticated session has no access token.")
-
-    # Preferred method
-    try:
-        if refresh_token:
-            client.auth.set_session(
-                access_token,
-                refresh_token,
-            )
-        else:
-            # Some versions still accept set_session with
-            # an empty/None refresh token.
-            client.auth.set_session(
-                access_token,
-                "",
-            )
-
-        return client
-
-    except Exception:
-        # Compatibility fallback for different supabase-py versions.
+    if access_token and refresh_token:
         try:
-            client.postgrest.auth(access_token)
+            client.auth.set_session(access_token, refresh_token)
             return client
-        except Exception as exc:
-            raise RuntimeError(
-                f"Unable to establish authenticated Supabase client: {exc}"
-            )
+        except Exception:
+            pass
+    if access_token:
+        client.postgrest.auth(access_token)
+    return client
+
+
+DEFAULTS = {
+    "session": None,
+    "user_role": None,
+    "assigned_tsp": None,
+    "assigned_team": None,
+    "grid_version": 0,
+    "filter_version": 0,
+    "pending_updates": {},
+    "pending_inserts": [],
+    "pending_deletes": set(),
+    "editor_source_df": None,
+}
+
+for key, value in DEFAULTS.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 
 # ============================================================
-# AUTHENTICATION
+# 3. AUTHENTICATION & RBAC
 # ============================================================
 
 def login_user(email: str, password: str):
-    """
-    Authenticate user and retrieve role by authenticated user UUID.
-
-    Role lookup is intentionally NOT performed by email.
-    """
-
     try:
-        base_supabase = get_base_client()
-
         response = base_supabase.auth.sign_in_with_password(
-            {
-                "email": email.strip(),
-                "password": password,
-            }
+            {"email": email.strip(), "password": password}
         )
-
         if not response.session:
-            return False, "Login failed: no authenticated session was returned."
+            return False, "Login failed: No session returned."
 
         st.session_state.session = response.session
-
         user_client = get_user_client()
 
         role_result = (
-            user_client.table(ROLE_TABLE)
-            .select("role")
-            .eq(
-                "user_id",
-                response.session.user.id,
-            )
+            user_client.table("user_roles")
+            .select("*")
+            .eq("user_id", response.session.user.id)
             .limit(1)
             .execute()
         )
-
-        role = (
-            role_result.data[0].get("role", "viewer")
-            if role_result.data
-            else "viewer"
-        )
-
-        role = str(role).strip().lower()
-
-        if role not in {"viewer", "editor", "admin"}:
-            role = "viewer"
-
-        st.session_state.user_role = role
+        if role_result.data:
+            row_info = role_result.data[0]
+            st.session_state.user_role = row_info.get("role", "viewer")
+            st.session_state.assigned_tsp = row_info.get("assigned_tsp")
+            st.session_state.assigned_team = row_info.get("assigned_team")
+        else:
+            st.session_state.user_role = "viewer"
 
         return True, "Login successful."
-
     except Exception as exc:
         return False, str(exc)
 
 
 def logout_user():
-    """
-    Logout current user and clear local application state.
-    """
-
     try:
-        base_supabase = get_base_client()
         base_supabase.auth.sign_out()
     except Exception:
         pass
-
     for key, value in DEFAULTS.items():
-
-        # Create a fresh set for pending deletes.
-        if key == "pending_deletes":
-            st.session_state[key] = set()
-        elif key == "pending_updates":
-            st.session_state[key] = {}
-        elif key == "pending_inserts":
-            st.session_state[key] = []
-        else:
-            st.session_state[key] = value
-
+        st.session_state[key] = value
     st.rerun()
 
 
-# ============================================================
-# LOGIN SCREEN
-# ============================================================
-
 if not st.session_state.session:
-
-    st.title("🗄️ YgnTBPro Database")
-
-    st.subheader("Login")
-
+    st.title("🔑 YgnTBPro Database Login")
     with st.form("login_form"):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        login_clicked = st.form_submit_button("Login", use_container_width=True, type="primary")
 
-        email = st.text_input(
-            "Email",
-            autocomplete="email",
-        )
-
-        password = st.text_input(
-            "Password",
-            type="password",
-            autocomplete="current-password",
-        )
-
-        submitted = st.form_submit_button(
-            "Login",
-            type="primary",
-            use_container_width=True,
-        )
-
-    if submitted:
-
-        if not email.strip() or not password:
-            st.error("Please enter both email and password.")
-
+    if login_clicked:
+        success, message = login_user(email, password)
+        if success:
+            st.success(message)
+            st.rerun()
         else:
-
-            success, message = login_user(
-                email,
-                password,
-            )
-
-            if success:
-                st.success(message)
-                st.rerun()
-            else:
-                st.error(message)
-
+            st.error(message)
     st.stop()
 
 
-# ============================================================
-# CURRENT USER / PERMISSIONS
-# ============================================================
-
-user_role = (
-    st.session_state.get("user_role")
-    or "viewer"
-).lower()
-
-can_edit = user_role in {
-    "editor",
-    "admin",
-}
-
+user_role = st.session_state.user_role or "viewer"
+can_edit = user_role in {"editor", "admin"}
 can_add = user_role == "admin"
-
 can_delete = user_role == "admin"
 
-current_session = st.session_state.session
-
-current_user = getattr(
-    current_session,
-    "user",
-    None,
-)
-
-current_email = (
-    getattr(current_user, "email", None)
-    if current_user
-    else None
-)
-
-current_user_id = (
-    getattr(current_user, "id", None)
-    if current_user
-    else None
-)
+st.sidebar.title("🩺 YgnTBPro System")
+st.sidebar.markdown(f"**Role:** `{user_role.upper()}`")
+if st.session_state.assigned_tsp:
+    st.sidebar.markdown(f"**Assigned Tsp:** `{st.session_state.assigned_tsp}`")
+if st.session_state.assigned_team:
+    st.sidebar.markdown(f"**Assigned Team:** `{st.session_state.assigned_team}`")
+if st.sidebar.button("Logout", use_container_width=True):
+    logout_user()
 
 
 # ============================================================
-# UTILITY FUNCTIONS
+# 4. CACHED SCHEMA & FAST FILTER VIEW FETCHERS
 # ============================================================
 
-def resolve_column(
-    columns,
-    *candidates,
-):
-    """
-    Return the actual column name matching one of the candidates.
-    Matching is case-insensitive.
-    """
-
-    columns = list(columns)
-
-    lower_map = {
-        str(column).lower(): column
-        for column in columns
-    }
-
+def resolve_column(columns, *candidates):
+    lookup = {str(c).lower(): c for c in columns}
     for candidate in candidates:
-
         if candidate in columns:
             return candidate
-
-        actual = lower_map.get(
-            str(candidate).lower()
-        )
-
-        if actual is not None:
-            return actual
-
+        found = lookup.get(str(candidate).lower())
+        if found is not None:
+            return found
     return None
 
-
-def values_equal(left, right) -> bool:
-    """
-    Robust comparison for pandas/NumPy/date/NaN values.
-    """
-
-    if left is None and right is None:
-        return True
-
+@st.cache_data(ttl=600, show_spinner=False)
+def get_table_columns(table_name: str) -> list:
     try:
-        if pd.isna(left) and pd.isna(right):
-            return True
+        res = get_user_client().table(table_name).select("*").limit(1).execute()
+        if res.data:
+            return list(res.data[0].keys())
     except Exception:
         pass
+    return PRIMARY_COLUMNS
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_all_filter_options() -> dict:
+    """Single <1KB query to the PostgreSQL View `ygntbpro_filter_options`."""
+    default_opts = {
+        "visit_no_list": [],
+        "sr_no_list": [],
+        "team_list": [],
+        "tsp_list": [],
+        "approach_list": [],
+        "case_list": [],
+    }
     try:
-        return bool(left == right)
+        res = get_user_client().table("ygntbpro_filter_options").select("*").limit(1).execute()
+        if res.data:
+            row = res.data[0]
+            return {k: (row.get(k) or []) for k in default_opts}
     except Exception:
-        return str(left) == str(right)
+        pass
+    return default_opts
 
 
-def clean_value(value):
-    """
-    Convert pandas/NumPy values into values suitable for Supabase JSON.
-    """
+# ============================================================
+# 5. VALIDATED MODAL USERFORM (@st.dialog)
+# ============================================================
 
-    if value is None:
+def safe_date(val):
+    if pd.isna(val) or val in (None, "", "None", "NaT", "nan"):
+        return None
+    try:
+        return pd.to_datetime(val).date()
+    except Exception:
         return None
 
-    if isinstance(value, pd.Timestamp):
-        if pd.isna(value):
-            return None
-        return value.isoformat()
-
-    if isinstance(value, datetime):
-        return value.isoformat()
-
-    if isinstance(value, date):
-        return value.isoformat()
-
-    if isinstance(value, Decimal):
-        return float(value)
-
-    if isinstance(value, np.integer):
-        return int(value)
-
-    if isinstance(value, np.floating):
-        if np.isnan(value):
-            return None
-        return float(value)
-
-    if isinstance(value, np.bool_):
-        return bool(value)
-
-    if isinstance(value, float):
-        if np.isnan(value) or np.isinf(value):
-            return None
-
+def safe_int(val, default=0):
+    if pd.isna(val) or val in (None, "", "None", "nan", "<NA>"):
+        return default
     try:
-        if pd.isna(value):
-            return None
+        return int(float(val))
     except Exception:
-        pass
+        return default
 
-    return value
+def safe_float(val, default=0.0):
+    if pd.isna(val) or val in (None, "", "None", "nan", "<NA>"):
+        return default
+    try:
+        return float(val)
+    except Exception:
+        return default
 
-
-def make_json_safe(data):
-    """
-    Recursively make dictionaries/lists JSON safe.
-    """
-
-    if isinstance(data, dict):
-
-        return {
-            str(key): make_json_safe(value)
-            for key, value in data.items()
-        }
-
-    if isinstance(data, (list, tuple, set)):
-
-        return [
-            make_json_safe(value)
-            for value in data
-        ]
-
-    return clean_value(data)
+def safe_str(val):
+    if pd.isna(val) or val in (None, "None", "nan", "<NA>"):
+        return ""
+    return str(val).strip()
 
 
-def dataframe_to_records(df: pd.DataFrame):
-    """
-    Convert DataFrame to JSON-safe record dictionaries.
-    """
+@st.dialog("🩺 Patient Clinical Record UserForm", width="large")
+def open_patient_userform(mode: str, patient_row: dict, primary_key: str):
+    is_new = (mode == "create")
+    pid_val = safe_str(patient_row.get(primary_key))
 
-    if df is None or df.empty:
-        return []
+    if is_new:
+        st.info("➕ **Creating New Patient Record** (Admin Only)")
+    else:
+        st.caption(f"Editing Record — **{primary_key}: `{pid_val}`** | **Name:** `{safe_str(patient_row.get('Name'))}`")
 
-    records = df.to_dict(
-        orient="records"
-    )
+    with st.form("clinical_userform", clear_on_submit=False):
+        ftabs = st.tabs([
+            "1. ID & Demographics",
+            "2. Symptoms & Risk",
+            "3. Diagnostics & Lab",
+            "4. Regimen & Outcome",
+            "5. TPT & Disability",
+        ])
 
-    return make_json_safe(records)
+        with ftabs[0]:
+            c1, c2, c3, c4 = st.columns(4)
+            f_pid = c1.text_input("Patient ID *", value=pid_val, disabled=(not is_new and user_role != "admin"))
+            f_date = c2.date_input("Screening Date *", value=safe_date(patient_row.get("Date")) or date.today())
+            f_reg_date = c3.date_input("Registrar Date", value=safe_date(patient_row.get("RegistrarDate")))
+            f_team = c4.number_input("Team No", min_value=0, max_value=99, value=safe_int(patient_row.get("Team")))
+
+            d1, d2, d3, d4 = st.columns(4)
+            f_name = d1.text_input("Patient Name *", value=safe_str(patient_row.get("Name")))
+            f_age = d2.number_input("Age (Years) *", min_value=0, max_value=120, value=safe_int(patient_row.get("Age")))
+            current_sex = safe_int(patient_row.get("Sex"), default=1)
+            f_sex = d3.selectbox("Sex *", options=[1, 2], index=0 if current_sex == 1 else 1, format_func=lambda x: "1 - Male" if x == 1 else "2 - Female")
+            f_phone = d4.text_input("Phone No", value=safe_str(patient_row.get("PhoneNo")))
+
+            loc1, loc2, loc3, loc4 = st.columns(4)
+            f_sr = loc1.text_input("State/Region", value=safe_str(patient_row.get("StateRegionName")) or "Yangon")
+            f_tsp = loc2.text_input("Township (Tsp) *", value=safe_str(patient_row.get("Tsp")))
+            f_ward = loc3.text_input("Ward/Village", value=safe_str(patient_row.get("WardVillage")))
+            f_approach = loc4.text_input("Approach", value=safe_str(patient_row.get("Approach")))
+
+            f_address = st.text_input("Full Address", value=safe_str(patient_row.get("Address")))
+
+        with ftabs[1]:
+            st.markdown("**Clinical Symptoms (0 = No, 1 = Yes)**")
+            s1, s2, s3, s4 = st.columns(4)
+            f_cough = s1.selectbox("Cough", [0, 1], index=1 if safe_int(patient_row.get("Cough")) == 1 else 0)
+            f_fever = s2.selectbox("Fever", [0, 1], index=1 if safe_int(patient_row.get("Fever")) == 1 else 0)
+            f_wtloss = s3.selectbox("Weight Loss", [0, 1], index=1 if safe_int(patient_row.get("Wtloss")) == 1 else 0)
+            f_nightsweat = s4.selectbox("Night Sweat", [0, 1], index=1 if safe_int(patient_row.get("Nightsweat")) == 1 else 0)
+
+            s5, s6, s7, s8 = st.columns(4)
+            f_haemo = s5.selectbox("Haemoptysis", [0, 1], index=1 if safe_int(patient_row.get("Haemoptysis")) == 1 else 0)
+            f_chest = s6.selectbox("Chest Pain", [0, 1], index=1 if safe_int(patient_row.get("Chestpain")) == 1 else 0)
+            f_tbcontact = s7.selectbox("TB Contact", [0, 1], index=1 if safe_int(patient_row.get("TBcontact")) == 1 else 0)
+            f_smoking = s8.selectbox("Smoking", [0, 1], index=1 if safe_int(patient_row.get("Smoking")) == 1 else 0)
+
+            st.divider()
+            st.markdown("**Comorbidities & Vitals**")
+            m1, m2, m3, m4 = st.columns(4)
+            f_rbs = m1.number_input("RBS (mg/dL)", min_value=0.0, max_value=1000.0, step=1.0, value=safe_float(patient_row.get("RBS")))
+            f_hba1c = m2.number_input("HbA1c (%)", min_value=0.0, max_value=25.0, step=0.1, value=safe_float(patient_row.get("HbA1c")))
+            f_sys = m3.number_input("Systolic BP", min_value=0.0, max_value=300.0, step=1.0, value=safe_float(patient_row.get("Systolic")))
+            f_dia = m4.number_input("Diastolic BP", min_value=0.0, max_value=200.0, step=1.0, value=safe_float(patient_row.get("Diastolic")))
+
+        with ftabs[2]:
+            l1, l2, l3 = st.columns(3)
+            f_cxrr = l1.number_input("CXR Requested (Code)", min_value=0, max_value=9, value=safe_int(patient_row.get("Cxrr")))
+            f_cxr_res = l2.number_input("CXR Result (Code)", min_value=0, max_value=9, value=safe_int(patient_row.get("CXRresult")))
+            f_hiv = l3.text_input("HIV Status", value=safe_str(patient_row.get("HIVStatus")))
+
+            l4, l5, l6 = st.columns(3)
+            f_sputum_req = l4.number_input("Sputum Requested", min_value=0, max_value=9, value=safe_int(patient_row.get("Sputum_request")))
+            f_sputum_res = l5.number_input("Microscopy Result", min_value=0, max_value=9, value=safe_int(patient_row.get("Sputummicroscopyresult")))
+            f_xpert_res = l6.number_input("GeneXpert Result", min_value=0, max_value=9, value=safe_int(patient_row.get("GeneXpertresult")))
+
+            l7, l8, l9 = st.columns(3)
+            f_bact = l7.number_input("Bacteriological Status", min_value=0, max_value=9, value=safe_int(patient_row.get("Bact_status")))
+            f_case = l8.number_input("Case Classification", min_value=0, max_value=9, value=safe_int(patient_row.get("Case")))
+            f_type_dis = l9.text_input("Type of Disease", value=safe_str(patient_row.get("TypeofDisease")))
+
+        with ftabs[3]:
+            r1, r2, r3 = st.columns(3)
+            f_tb_reg_no = r1.text_input("Township TB Reg Number", value=safe_str(patient_row.get("TownshipTBRegNumber")))
+            f_regimen = r2.number_input("Treatment Regimen (Code)", min_value=0, max_value=99, value=safe_int(patient_row.get("TreatmentRegimen")))
+            f_init_date = r3.date_input("Initial Started Date", value=safe_date(patient_row.get("InitialStartedDate")))
+
+            r4, r5, r6 = st.columns(3)
+            f_outcome = r4.text_input("Treatment Outcome", value=safe_str(patient_row.get("TreatmentOutcome1211")))
+            f_outcome_date = r5.date_input("Tx Outcome Date", value=safe_date(patient_row.get("Tx_Outcome_Date")))
+            f_dot_vol = r6.text_input("DOT Volunteer Name", value=safe_str(patient_row.get("DOTvolName111")))
+
+            f_remark = st.text_area("Clinical Remark", value=safe_str(patient_row.get("Remark")))
+
+        with ftabs[4]:
+            t1, t2, t3 = st.columns(3)
+            f_tpt_regno = t1.text_input("TPT Reg No", value=safe_str(patient_row.get("TPTregno")))
+            f_tpt_date = t2.date_input("TPT Registration Date", value=safe_date(patient_row.get("TPTregistrationdate")))
+            f_tpt_regimen = t3.text_input("TPT Regimen", value=safe_str(patient_row.get("TPTregimen")))
+
+            t4, t5, t6 = st.columns(3)
+            f_tpt_outcome = t4.text_input("TPT Treatment Outcome", value=safe_str(patient_row.get("TPTTreatmentOutcome")))
+            f_tpt_out_date = t5.date_input("TPT Outcome Date", value=safe_date(patient_row.get("OutcomeDate")))
+            f_disability = t6.text_input("Disability Status", value=safe_str(patient_row.get("Disability1")))
+
+        submitted = st.form_submit_button(
+            "💾 Validate & Commit to Supabase",
+            type="primary",
+            disabled=not (can_add if is_new else can_edit),
+            use_container_width=True,
+        )
+
+        if submitted:
+            val_errors = []
+            if not f_pid.strip():
+                val_errors.append("Patient ID is mandatory.")
+            if not f_name.strip():
+                val_errors.append("Patient Name is mandatory.")
+            if not f_tsp.strip():
+                val_errors.append("Township (Tsp) is mandatory.")
+            if f_outcome_date and f_date and f_outcome_date < f_date:
+                val_errors.append("Tx Outcome Date cannot be earlier than Screening Date.")
+            if f_tpt_out_date and f_tpt_date and f_tpt_out_date < f_tpt_date:
+                val_errors.append("TPT Outcome Date cannot be earlier than TPT Registration Date.")
+            if f_sys > 0 and f_dia > 0 and f_dia >= f_sys:
+                val_errors.append("Diastolic BP must be lower than Systolic BP.")
+
+            if val_errors:
+                for err in val_errors:
+                    st.error(f"⚠️ Validation Error: {err}")
+            else:
+                raw_payload = {
+                    primary_key: f_pid.strip(),
+                    "Date": f_date,
+                    "RegistrarDate": f_reg_date,
+                    "Team": f_team,
+                    "Name": f_name.strip(),
+                    "Age": f_age,
+                    "Sex": f_sex,
+                    "PhoneNo": f_phone.strip() or None,
+                    "StateRegionName": f_sr.strip() or None,
+                    "Tsp": f_tsp.strip(),
+                    "WardVillage": f_ward.strip() or None,
+                    "Approach": f_approach.strip() or None,
+                    "Address": f_address.strip() or None,
+                    "Cough": f_cough,
+                    "Fever": f_fever,
+                    "Wtloss": f_wtloss,
+                    "Nightsweat": f_nightsweat,
+                    "Haemoptysis": f_haemo,
+                    "Chestpain": f_chest,
+                    "TBcontact": f_tbcontact,
+                    "Smoking": f_smoking,
+                    "RBS": f_rbs if f_rbs > 0 else None,
+                    "HbA1c": f_hba1c if f_hba1c > 0 else None,
+                    "Systolic": f_sys if f_sys > 0 else None,
+                    "Diastolic": f_dia if f_dia > 0 else None,
+                    "Cxrr": f_cxrr,
+                    "CXRresult": f_cxr_res,
+                    "HIVStatus": f_hiv.strip() or None,
+                    "Sputum_request": f_sputum_req,
+                    "Sputummicroscopyresult": f_sputum_res,
+                    "GeneXpertresult": f_xpert_res,
+                    "Bact_status": f_bact,
+                    "Case": f_case,
+                    "TypeofDisease": f_type_dis.strip() or None,
+                    "TownshipTBRegNumber": f_tb_reg_no.strip() or None,
+                    "TreatmentRegimen": f_regimen,
+                    "InitialStartedDate": f_init_date,
+                    "TreatmentOutcome1211": f_outcome.strip() or None,
+                    "Tx_Outcome_Date": f_outcome_date,
+                    "DOTvolName111": f_dot_vol.strip() or None,
+                    "Remark": f_remark.strip() or None,
+                    "TPTregno": f_tpt_regno.strip() or None,
+                    "TPTregistrationdate": f_tpt_date,
+                    "TPTregimen": f_tpt_regimen.strip() or None,
+                    "TPTTreatmentOutcome": f_tpt_outcome.strip() or None,
+                    "OutcomeDate": f_tpt_out_date,
+                    "Disability1": f_disability.strip() or None,
+                }
+
+                clean_payload = serialize_dataframe_for_supabase(pd.DataFrame([raw_payload]), DATE_COLUMNS)[0]
+                sync_client = get_user_client()
+
+                try:
+                    if is_new:
+                        sync_client.table(TABLE_NAME).insert(clean_payload).execute()
+                    else:
+                        sync_client.table(TABLE_NAME).update(clean_payload).eq(primary_key, pid_val).execute()
+
+                    get_all_filter_options.clear()
+                    st.session_state.grid_version += 1
+                    st.success("✅ Patient record validated and saved to Supabase!")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"❌ Database Error: {ex}")
 
 
 # ============================================================
-# PENDING CHANGES
+# 6. GRID DIFF HELPERS
 # ============================================================
 
-def add_pending_update(
-    primary_id,
-    changes: dict,
-):
-    """
-    Add or merge an UPDATE into pending_updates.
-    """
+def values_equal(left, right) -> bool:
+    if pd.isna(left) and pd.isna(right):
+        return True
+    return str(left).strip() == str(right).strip()
 
-    primary_id = clean_value(primary_id)
-
-    if primary_id is None:
-        return
-
-    if primary_id in st.session_state.pending_deletes:
-        return
-
-    if primary_id not in st.session_state.pending_updates:
-        st.session_state.pending_updates[primary_id] = {}
-
-    st.session_state.pending_updates[primary_id].update(
-        make_json_safe(changes)
-    )
-
-
-def remove_pending_update(
-    primary_id,
-):
-    st.session_state.pending_updates.pop(
-        primary_id,
-        None,
-    )
-
-
-def add_pending_delete(
-    primary_id,
-):
-    """
-    Add a DELETE while removing any pending UPDATE for
-    the same record.
-    """
-
-    primary_id = clean_value(primary_id)
-
-    if primary_id is None:
-        return
-
-    st.session_state.pending_deletes.add(
-        primary_id
-    )
-
-    st.session_state.pending_updates.pop(
-        primary_id,
-        None,
-    )
-
-
-def add_pending_insert(
-    record: dict,
-):
-    """
-    Add a new record to pending inserts.
-    """
-
-    record = make_json_safe(record)
-
-    if not record:
-        return
-
-    st.session_state.pending_inserts.append(
-        record
-    )
-
-
-def pending_changes_count():
-    return (
-        len(st.session_state.pending_updates)
-        + len(st.session_state.pending_inserts)
-        + len(st.session_state.pending_deletes)
-    )
-
+def clean_value(value):
+    return None if pd.isna(value) else value
 
 def clear_pending_changes():
     st.session_state.pending_updates = {}
     st.session_state.pending_inserts = []
     st.session_state.pending_deletes = set()
-    st.session_state.new_row_buffer = []
-
-
-# ============================================================
-# SCHEMA
-# ============================================================
-
-@st.cache_data(
-    ttl=600,
-    show_spinner=False,
-)
-def get_table_columns_cached():
-    """
-    Get column names using the public/base client.
-
-    Schema is not user-specific, so a short cache is appropriate.
-    """
-
-    client = get_base_client()
-
-    response = (
-        client.table(TABLE_NAME)
-        .select("*")
-        .limit(1)
-        .execute()
-    )
-
-    data = response.data or []
-
-    if not data:
-        return []
-
-    return list(
-        data[0].keys()
-    )
-
-
-def get_table_columns():
-    return get_table_columns_cached()
-
-
-# ============================================================
-# PAGINATED SUPABASE QUERY
-# ============================================================
-
-def fetch_page_from_query(
-    query_builder,
-    page: int,
-    page_size: int,
-):
-    """
-    Execute a query for exactly one UI page.
-
-    This prevents the entire table from being sent to Streamlit.
-    """
-
-    page = max(
-        1,
-        int(page),
-    )
-
-    page_size = max(
-        1,
-        int(page_size),
-    )
-
-    start = (
-        page - 1
-    ) * page_size
-
-    end = (
-        start
-        + page_size
-        - 1
-    )
-
-    response = (
-        query_builder
-        .range(start, end)
-        .execute()
-    )
-
-    rows = response.data or []
-
-    return pd.DataFrame(rows)
-
-
-# ============================================================
-# FILTER QUERY BUILDER
-# ============================================================
-
-def apply_text_filter(
-    query,
-    column,
-    value,
-):
-    """
-    Case-insensitive contains filter.
-
-    Uses ilike so users can enter partial values.
-    """
-
-    if (
-        column
-        and value is not None
-        and str(value).strip()
-    ):
-
-        value = str(value).strip()
-
-        # Escape characters that have special meaning in
-        # PostgreSQL LIKE expressions.
-        value = (
-            value
-            .replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
-
-        query = query.ilike(
-            column,
-            f"%{value}%",
-        )
-
-    return query
-
-
-def apply_exact_filter(
-    query,
-    column,
-    value,
-):
-    if (
-        column
-        and value is not None
-        and str(value).strip()
-    ):
-
-        query = query.eq(
-            column,
-            str(value).strip(),
-        )
-
-    return query
-
-
-def build_filtered_query(
-    client,
-    columns,
-    filters,
-    count=False,
-):
-    """
-    Build a server-side filtered query.
-
-    All filtering occurs in PostgreSQL/PostgREST.
-    """
-
-    query = (
-        client
-        .table(TABLE_NAME)
-        .select(
-            "*",
-            count="exact" if count else None,
-        )
-    )
-
-    # --------------------------------------------------------
-    # Patient ID
-    # --------------------------------------------------------
-
-    patient_col = resolve_column(
-        columns,
-        *PRIMARY_KEY_CANDIDATES,
-    )
-
-    patient_id = filters.get(
-        "patient_id",
-        "",
-    )
-
-    if (
-        patient_col
-        and patient_id
-        and str(patient_id).strip()
-    ):
-
-        # PatientID is normally unique, so exact matching is
-        # substantially faster than loading all IDs.
-        query = query.eq(
-            patient_col,
-            str(patient_id).strip(),
-        )
-
-    # --------------------------------------------------------
-    # Text filters
-    # --------------------------------------------------------
-
-    mapping = {
-        "team": [
-            "team",
-            "Team",
-        ],
-        "tsp": [
-            "tsp",
-            "Tsp",
-            "TSP",
-        ],
-        "approach": [
-            "approach",
-            "Approach",
-        ],
-        "case": [
-            "case",
-            "Case",
-        ],
-        "visit_no": [
-            "visitno",
-            "Visit_no",
-            "visit_no",
-        ],
-        "sr_no": [
-            "srno",
-            "Sr_No",
-            "sr_no",
-        ],
-        "ward_village": [
-            "wardvillage",
-            "WardVillage",
-            "ward_village",
-        ],
-    }
-
-    for filter_name, candidates in mapping.items():
-
-        column = resolve_column(
-            columns,
-            *candidates,
-        )
-
-        query = apply_text_filter(
-            query,
-            column,
-            filters.get(
-                filter_name,
-                "",
-            ),
-        )
-
-    # --------------------------------------------------------
-    # Date range
-    # --------------------------------------------------------
-
-    date_col = resolve_column(
-        columns,
-        *DATE_CANDIDATES,
-    )
-
-    date_from = filters.get(
-        "date_from"
-    )
-
-    date_to = filters.get(
-        "date_to"
-    )
-
-    if date_col:
-
-        if date_from:
-            query = query.gte(
-                date_col,
-                date_from.isoformat(),
-            )
-
-        if date_to:
-            next_day = (
-                date_to
-                + timedelta(days=1)
-            )
-
-            # Use < next day rather than <= 23:59:59.
-            query = query.lt(
-                date_col,
-                next_day.isoformat(),
-            )
-
-    # --------------------------------------------------------
-    # Stable ordering
-    # --------------------------------------------------------
-
-    if patient_col:
-        query = query.order(
-            patient_col,
-            desc=True,
-        )
-
-    return query
-
-
-# ============================================================
-# RECORD COUNT
-# ============================================================
-
-def get_filtered_count(
-    client,
-    columns,
-    filters,
-):
-    """
-    Get exact matching row count.
-
-    This is a separate request because the actual page query
-    only needs the visible rows.
-    """
-
-    try:
-
-        query = build_filtered_query(
-            client=client,
-            columns=columns,
-            filters=filters,
-            count=True,
-        )
-
-        response = (
-            query
-            .range(0, 0)
-            .execute()
-        )
-
-        return (
-            response.count
-            if response.count is not None
-            else None
-        )
-
-    except Exception:
-        return None
-
-
-# ============================================================
-# APPLY PENDING CHANGES TO DISPLAYED PAGE
-# ============================================================
-
-def merge_pending_updates_into_page(
-    df: pd.DataFrame,
-):
-    """
-    Overlay pending UPDATE values onto the currently displayed
-    page so edits remain visible after pagination/filter changes.
-    """
-
-    if df is None or df.empty:
-        return df
-
-    if not st.session_state.pending_updates:
-        return df
-
-    primary_col = resolve_column(
-        df.columns,
-        *PRIMARY_KEY_CANDIDATES,
-    )
-
-    if not primary_col:
-        return df
-
-    result = df.copy()
-
-    for index, row in result.iterrows():
-
-        primary_id = clean_value(
-            row.get(primary_col)
-        )
-
-        if primary_id in st.session_state.pending_updates:
-
-            changes = st.session_state.pending_updates[
-                primary_id
-            ]
-
-            for column, value in changes.items():
-
-                if column in result.columns:
-                    result.at[
-                        index,
-                        column,
-                    ] = value
-
-    return result
-
-
-def remove_pending_deleted_rows(
-    df: pd.DataFrame,
-):
-    """
-    Do not display records that have been marked for deletion.
-    """
-
-    if df is None or df.empty:
-        return df
-
-    if not st.session_state.pending_deletes:
-        return df
-
-    primary_col = resolve_column(
-        df.columns,
-        *PRIMARY_KEY_CANDIDATES,
-    )
-
-    if not primary_col:
-        return df
-
-    mask = ~df[
-        primary_col
-    ].map(clean_value).isin(
-        st.session_state.pending_deletes
-    )
-
-    return df.loc[
-        mask
-    ].reset_index(
-        drop=True
-    )
-
-
-# ============================================================
-# CAPTURE AG GRID EDITS
-# ============================================================
-
-def capture_grid_changes(
-    original_df: pd.DataFrame,
-    edited_df: pd.DataFrame,
-):
-    """
-    Compare only the currently displayed page.
-
-    IMPORTANT:
-    Missing rows are NOT treated as deletions.
-    Deletion is explicit through Delete Selected.
-
-    This is necessary for server-side pagination.
-    """
-
-    if (
-        original_df is None
-        or edited_df is None
-        or original_df.empty
-        or edited_df.empty
-    ):
+    st.session_state.editor_source_df = None
+    st.session_state.grid_version += 1
+
+def capture_editor_changes(source_df: pd.DataFrame, edited_df: pd.DataFrame, primary_key: str):
+    if source_df is None or edited_df is None:
+        return
+    source = source_df.reset_index(drop=True).copy()
+    edited = edited_df.reset_index(drop=True).copy()
+
+    if primary_key not in source.columns or primary_key not in edited.columns:
         return
 
-    primary_col = resolve_column(
-        original_df.columns,
-        *PRIMARY_KEY_CANDIDATES,
-    )
+    source_ids = {str(v).strip(): i for i, v in enumerate(source[primary_key]) if pd.notna(v) and str(v).strip()}
+    edited_ids = {str(v).strip() for v in edited[primary_key] if pd.notna(v) and str(v).strip()}
 
-    if not primary_col:
-        return
+    for pid in source_ids:
+        if pid not in edited_ids:
+            st.session_state.pending_deletes.add(pid)
+            st.session_state.pending_updates.pop(pid, None)
+        else:
+            st.session_state.pending_deletes.discard(pid)
 
-    original = original_df.copy()
-    edited = edited_df.copy()
+    comparable_cols = [c for c in source.columns if c in edited.columns and c not in {primary_key, "updated_at"}]
+    for pid, source_idx in source_ids.items():
+        if pid not in edited_ids:
+            continue
+        edited_idx = next((i for i, v in enumerate(edited[primary_key]) if pd.notna(v) and str(v).strip() == pid), None)
+        if edited_idx is None:
+            continue
 
-    if primary_col not in edited.columns:
-        return
+        current_pending = st.session_state.pending_updates.get(pid, {}).copy()
+        for col in comparable_cols:
+            old_val = source.at[source_idx, col]
+            new_val = edited.at[edited_idx, col]
+            if values_equal(old_val, new_val):
+                current_pending.pop(col, None)
+            else:
+                current_pending[col] = clean_value(new_val)
 
-    original_index = {}
+        if current_pending:
+            st.session_state.pending_updates[pid] = current_pending
+        else:
+            st.session_state.pending_updates.pop(pid, None)
 
-    for _, row in original.iterrows():
-
-        primary_id = clean_value(
-            row.get(primary_col)
-        )
-
-        if primary_id is not None:
-            original_index[
-                primary_id
-            ] = row
-
+    st.session_state.pending_inserts = []
     for _, row in edited.iterrows():
-
-        primary_id = clean_value(
-            row.get(primary_col)
-        )
-
-        if primary_id is None:
+        pid = row.get(primary_key)
+        if pd.notna(pid) and str(pid).strip() in source_ids:
             continue
-
-        if primary_id not in original_index:
-            continue
-
-        original_row = original_index[
-            primary_id
-        ]
-
-        changes = {}
-
-        for column in edited.columns:
-
-            if column == primary_col:
-                continue
-
-            if column not in original.columns:
-                continue
-
-            old_value = original_row.get(
-                column
-            )
-
-            new_value = row.get(
-                column
-            )
-
-            if not values_equal(
-                old_value,
-                new_value,
-            ):
-
-                changes[column] = clean_value(
-                    new_value
-                )
-
-        if changes:
-            add_pending_update(
-                primary_id,
-                changes,
-            )
+        clean_row = {col: clean_value(val) for col, val in row.items() if col != "updated_at"}
+        if any(v not in (None, "") for v in clean_row.values()):
+            st.session_state.pending_inserts.append(clean_row)
 
 
 # ============================================================
-# AG GRID
+# 7. FRAGMENT-ISOLATED APPLICATION TABS
 # ============================================================
 
-def create_grid_options(
-    df: pd.DataFrame,
-    primary_col: str | None,
-    editable: bool,
-    selected_ids: set,
-):
-    """
-    Create optimized AG Grid configuration.
-    """
+@st.fragment
+def render_explorer_tab():
+    st.subheader("💾 Server-Side Paginated Database Explorer")
+    c_top1, c_top2, c_top3, c_top4 = st.columns([2, 2, 1, 1])
 
-    gb = GridOptionsBuilder.from_dataframe(
-        df
+    with c_top1:
+        table_choice = st.selectbox("Select Database Table", [TABLE_NAME, TARGET_TABLE], index=0)
+    cols = get_table_columns(table_choice)
+    pk_col = resolve_column(cols, "PatientID", "patientid", "id") or cols[0]
+    name_col = resolve_column(cols, "Name", "name")
+    tsp_col = resolve_column(cols, "Tsp", "tsp")
+
+    with c_top2:
+        search_term = st.text_input("🔍 Server-Side Search (PatientID / Name / Tsp)", placeholder="Type to search in PostgreSQL...")
+    with c_top3:
+        page_size = st.selectbox("Rows / Page", [50, 100, 250, 500], index=1, key="exp_page_size")
+    with c_top4:
+        page_num = st.number_input("Page #", min_value=1, value=1, step=1, key="exp_page_num")
+
+    selected_cols = st.multiselect(
+        "Columns to Fetch & Display (Reduces Bandwidth)",
+        options=cols,
+        default=cols[:15] if len(cols) > 15 else cols,
     )
-
-    gb.configure_default_column(
-        editable=editable,
-        resizable=True,
-        sortable=True,
-        filter=True,
-        minWidth=110,
-    )
-
-    if primary_col:
-        gb.configure_column(
-            primary_col,
-            editable=False,
-            pinned="left",
-            checkboxSelection=can_delete,
-            headerCheckboxSelection=can_delete,
-            width=160,
-        )
-
-    updated_at_col = resolve_column(
-        df.columns,
-        "updated_at",
-        "Updated_at",
-        "updatedAt",
-    )
-
-    if updated_at_col:
-        gb.configure_column(
-            updated_at_col,
-            editable=False,
-        )
-
-    # Keep grid height manageable.
-    gb.configure_grid_options(
-        rowHeight=32,
-        headerHeight=38,
-        suppressRowClickSelection=False,
-        enableRangeSelection=True,
-        pagination=False,
-        animateRows=False,
-        suppressColumnVirtualisation=False,
-        suppressRowVirtualisation=False,
-        rowBuffer=5,
-    )
-
-    if can_delete:
-        gb.configure_selection(
-            selection_mode="multiple",
-            use_checkbox=True,
-            header_checkbox=True,
-        )
-
-    # JavaScript to format nulls consistently.
-    null_formatter = JsCode(
-        """
-        function(params) {
-            if (params.value === null ||
-                params.value === undefined ||
-                params.value === "") {
-                return "";
-            }
-            return params.value;
-        }
-        """
-    )
-
-    for column in df.columns:
-        gb.configure_column(
-            column,
-            valueFormatter=null_formatter,
-        )
-
-    return gb.build()
-
-
-# ============================================================
-# FETCH EDITOR PAGE
-# ============================================================
-
-def load_editor_page(
-    client,
-    columns,
-    filters,
-    page,
-    page_size,
-):
-    """
-    Load only one page from Supabase.
-    """
-
-    query = build_filtered_query(
-        client=client,
-        columns=columns,
-        filters=filters,
-        count=False,
-    )
-
-    df = fetch_page_from_query(
-        query_builder=query,
-        page=page,
-        page_size=page_size,
-    )
-
-    if df.empty:
-        return df
-
-    df = remove_pending_deleted_rows(
-        df
-    )
-
-    df = merge_pending_updates_into_page(
-        df
-    )
-
-    return df
-
-
-# ============================================================
-# SYNC OPERATIONS
-# ============================================================
-
-def sync_pending_changes():
-    """
-    Apply UPDATE / INSERT / DELETE operations to Supabase.
-
-    Successful operations are removed from the pending queue.
-    Failed operations remain pending.
-    """
-
-    if pending_changes_count() == 0:
-        return 0, 0, []
+    select_str = ",".join(f'"{c}"' for c in selected_cols) if selected_cols else "*"
 
     client = get_user_client()
-
-    errors = []
-    success_count = 0
-    attempted_count = 0
-
-    # --------------------------------------------------------
-    # UPDATE
-    # --------------------------------------------------------
-
-    for primary_id, changes in list(
-        st.session_state.pending_updates.items()
-    ):
-
-        attempted_count += 1
-
-        try:
-
-            if not changes:
-                del st.session_state.pending_updates[
-                    primary_id
-                ]
-                continue
-
-            payload = make_json_safe(
-                changes
-            )
-
-            (
-                client
-                .table(TABLE_NAME)
-                .update(payload)
-                .eq(
-                    resolve_primary_key_name(),
-                    primary_id,
-                )
-                .execute()
-            )
-
-            del st.session_state.pending_updates[
-                primary_id
-            ]
-
-            success_count += 1
-
-        except Exception as exc:
-
-            errors.append(
-                f"UPDATE {primary_id}: {exc}"
-            )
-
-    # --------------------------------------------------------
-    # INSERT
-    # --------------------------------------------------------
-
-    successful_inserts = []
-
-    for index, record in enumerate(
-        list(st.session_state.pending_inserts)
-    ):
-
-        attempted_count += 1
-
-        try:
-
-            payload = make_json_safe(
-                record
-            )
-
-            if not payload:
-                successful_inserts.append(
-                    index
-                )
-                continue
-
-            (
-                client
-                .table(TABLE_NAME)
-                .insert(payload)
-                .execute()
-            )
-
-            successful_inserts.append(
-                index
-            )
-
-            success_count += 1
-
-        except Exception as exc:
-
-            errors.append(
-                f"INSERT row {index + 1}: {exc}"
-            )
-
-    if successful_inserts:
-
-        st.session_state.pending_inserts = [
-            record
-            for index, record in enumerate(
-                st.session_state.pending_inserts
-            )
-            if index not in successful_inserts
-        ]
-
-    # --------------------------------------------------------
-    # DELETE
-    # --------------------------------------------------------
-
-    for primary_id in list(
-        st.session_state.pending_deletes
-    ):
-
-        attempted_count += 1
-
-        try:
-
-            (
-                client
-                .table(TABLE_NAME)
-                .delete()
-                .eq(
-                    resolve_primary_key_name(),
-                    primary_id,
-                )
-                .execute()
-            )
-
-            st.session_state.pending_deletes.remove(
-                primary_id
-            )
-
-            success_count += 1
-
-        except Exception as exc:
-
-            errors.append(
-                f"DELETE {primary_id}: {exc}"
-            )
-
-    return (
-        success_count,
-        attempted_count,
-        errors,
-    )
-
-
-# ============================================================
-# PRIMARY KEY RESOLUTION
-# ============================================================
-
-def resolve_primary_key_name():
-    columns = get_table_columns()
-
-    primary_col = resolve_column(
-        columns,
-        *PRIMARY_KEY_CANDIDATES,
-    )
-
-    if not primary_col:
-        raise RuntimeError(
-            "PatientID primary key column was not found."
-        )
-
-    return primary_col
-
-
-# ============================================================
-# HEADER
-# ============================================================
-
-header_col1, header_col2, header_col3 = st.columns(
-    [5, 2, 1]
-)
-
-with header_col1:
-
-    st.title("🗄️ YgnTBPro Database")
-
-with header_col2:
-
-    st.caption(
-        f"User: {current_email or 'Unknown'}"
-    )
-
-    st.caption(
-        f"Role: **{user_role.upper()}**"
-    )
-
-with header_col3:
-
-    if st.button(
-        "Logout",
-        use_container_width=True,
-    ):
-        logout_user()
-
-
-# ============================================================
-# ROLE INFORMATION
-# ============================================================
-
-if user_role == "viewer":
-
-    st.info(
-        "Viewer mode: records can be viewed and exported, "
-        "but cannot be changed."
-    )
-
-elif user_role == "editor":
-
-    st.info(
-        "Editor mode: existing records can be edited. "
-        "Adding and deleting records requires Admin permission."
-    )
-
-elif user_role == "admin":
-
-    st.success(
-        "Admin mode: edit, add and delete permissions enabled."
-    )
-
-
-# ============================================================
-# PENDING CHANGES SUMMARY
-# ============================================================
-
-pending_updates_count = len(
-    st.session_state.pending_updates
-)
-
-pending_inserts_count = len(
-    st.session_state.pending_inserts
-)
-
-pending_deletes_count = len(
-    st.session_state.pending_deletes
-)
-
-total_pending = (
-    pending_updates_count
-    + pending_inserts_count
-    + pending_deletes_count
-)
-
-
-if total_pending:
-
-    c1, c2, c3, c4, c5 = st.columns(
-        [1, 1, 1, 1.3, 1]
-    )
-
-    with c1:
-        st.metric(
-            "Pending",
-            total_pending,
-        )
-
-    with c2:
-        st.metric(
-            "Updates",
-            pending_updates_count,
-        )
-
-    with c3:
-        st.metric(
-            "Inserts",
-            pending_inserts_count,
-        )
-
-    with c4:
-        st.metric(
-            "Deletes",
-            pending_deletes_count,
-        )
-
-    with c5:
-
-        if st.button(
-            "Discard All",
-            use_container_width=True,
-        ):
-
-            clear_pending_changes()
-
-            st.rerun()
-
-
-# ============================================================
-# LOAD SCHEMA
-# ============================================================
-
-try:
-
-    table_columns = get_table_columns()
-
-except Exception as exc:
-
-    st.error(
-        f"Unable to read {TABLE_NAME} schema: {exc}"
-    )
-    st.stop()
-
-
-if not table_columns:
-
-    st.error(
-        f"No columns were found in {TABLE_NAME}."
-    )
-    st.stop()
-
-
-primary_col = resolve_column(
-    table_columns,
-    *PRIMARY_KEY_CANDIDATES,
-)
-
-date_col = resolve_column(
-    table_columns,
-    *DATE_CANDIDATES,
-)
-
-
-# ============================================================
-# MAIN TABS
-# ============================================================
-
-editor_tab, explorer_tab = st.tabs(
-    [
-        "✏️ Database Editor",
-        "🔎 Explorer",
-    ]
-)
-
-
-# ============================================================
-# EDITOR TAB
-# ============================================================
-
-with editor_tab:
-
-    st.subheader("Database Editor")
-
-    # --------------------------------------------------------
-    # FILTER PANEL
-    # --------------------------------------------------------
-
-    with st.expander(
-        "🔍 Filters",
-        expanded=True,
-    ):
-
-        f1, f2, f3, f4 = st.columns(4)
-
-        with f1:
-
-            patient_id_filter = st.text_input(
-                "Patient ID",
-                key="filter_patient_id",
-                placeholder="Exact PatientID",
-            )
-
-            team_filter = st.text_input(
-                "Team",
-                key="filter_team",
-                placeholder="e.g. 5",
-            )
-
-        with f2:
-
-            tsp_filter = st.text_input(
-                "TSP",
-                key="filter_tsp",
-                placeholder="e.g. SDG",
-            )
-
-            approach_filter = st.text_input(
-                "Approach",
-                key="filter_approach",
-                placeholder="PPM / DC / Mobile Visit",
-            )
-
-        with f3:
-
-            case_filter = st.text_input(
-                "Case",
-                key="filter_case",
-                placeholder="e.g. TB",
-            )
-
-            visit_no_filter = st.text_input(
-                "Visit No",
-                key="filter_visit_no",
-            )
-
-        with f4:
-
-            sr_no_filter = st.text_input(
-                "SR No",
-                key="filter_sr_no",
-            )
-
-            ward_village_filter = st.text_input(
-                "Ward / Village",
-                key="filter_ward_village",
-            )
-
-        d1, d2 = st.columns(2)
-
-        with d1:
-
-            date_from = st.date_input(
-                "Date From",
-                value=None,
-                key="filter_date_from",
-            )
-
-        with d2:
-
-            date_to = st.date_input(
-                "Date To",
-                value=None,
-                key="filter_date_to",
-            )
-
-        if (
-            date_from
-            and date_to
-            and date_from > date_to
-        ):
-
-            st.error(
-                "Date From cannot be later than Date To."
-            )
-
-        # ----------------------------------------------------
-        # ACTIONS
-        # ----------------------------------------------------
-
-        a1, a2, a3 = st.columns(
-            [1.4, 1, 1]
-        )
-
-        with a1:
-
-            apply_filters = st.button(
-                "🔄 Load / Apply Filters",
-                type="primary",
-                use_container_width=True,
-            )
-
-        with a2:
-
-            reset_filters = st.button(
-                "↺ Reset Filters",
-                use_container_width=True,
-            )
-
-        with a3:
-
-            if st.button(
-                "⟳ Refresh",
-                use_container_width=True,
-            ):
-
-                st.session_state.editor_query_version += 1
-                st.rerun()
-
-    # --------------------------------------------------------
-    # RESET FILTERS
-    # --------------------------------------------------------
-
-    if reset_filters:
-
-        for key in [
-            "filter_patient_id",
-            "filter_team",
-            "filter_tsp",
-            "filter_approach",
-            "filter_case",
-            "filter_visit_no",
-            "filter_sr_no",
-            "filter_ward_village",
-        ]:
-
-            st.session_state[key] = ""
-
-        st.session_state.filter_date_from = None
-        st.session_state.filter_date_to = None
-
-        # IMPORTANT:
-        # Pending changes are NOT cleared.
-        st.session_state.editor_page = 1
-
-        st.session_state.editor_filters = {
-            "patient_id": "",
-            "team": "",
-            "tsp": "",
-            "approach": "",
-            "case": "",
-            "visit_no": "",
-            "sr_no": "",
-            "ward_village": "",
-            "date_from": None,
-            "date_to": None,
-        }
-
-        st.session_state.editor_loaded = True
-        st.session_state.editor_query_version += 1
-
-        st.rerun()
-
-    # --------------------------------------------------------
-    # APPLY FILTERS
-    # --------------------------------------------------------
-
-    if apply_filters:
-
-        if (
-            date_from
-            and date_to
-            and date_from > date_to
-        ):
-
-            st.error(
-                "Please correct the date range."
-            )
-
-        else:
-
-            st.session_state.editor_filters = {
-                "patient_id": patient_id_filter.strip(),
-                "team": team_filter.strip(),
-                "tsp": tsp_filter.strip(),
-                "approach": approach_filter.strip(),
-                "case": case_filter.strip(),
-                "visit_no": visit_no_filter.strip(),
-                "sr_no": sr_no_filter.strip(),
-                "ward_village": ward_village_filter.strip(),
-                "date_from": date_from,
-                "date_to": date_to,
-            }
-
-            st.session_state.editor_page = 1
-            st.session_state.editor_loaded = True
-            st.session_state.editor_query_version += 1
-
-            st.rerun()
-
-    # --------------------------------------------------------
-    # DEFAULT FILTER STATE
-    # --------------------------------------------------------
-
-    if st.session_state.editor_filters is None:
-
-        st.session_state.editor_filters = {
-            "patient_id": "",
-            "team": "",
-            "tsp": "",
-            "approach": "",
-            "case": "",
-            "visit_no": "",
-            "sr_no": "",
-            "ward_village": "",
-            "date_from": None,
-            "date_to": None,
-        }
-
-    filters = st.session_state.editor_filters
-
-    # --------------------------------------------------------
-    # FETCH CURRENT PAGE
-    # --------------------------------------------------------
-
-    if st.session_state.editor_loaded:
-
-        try:
-
-            user_client = get_user_client()
-
-            with st.spinner(
-                "Loading records..."
-            ):
-
-                total_count = get_filtered_count(
-                    client=user_client,
-                    columns=table_columns,
-                    filters=filters,
-                )
-
-                editor_page = st.session_state.editor_page
-
-                page_size = st.session_state.editor_page_size
-
-                editor_df = load_editor_page(
-                    client=user_client,
-                    columns=table_columns,
-                    filters=filters,
-                    page=editor_page,
-                    page_size=page_size,
-                )
-
-        except Exception as exc:
-
-            st.error(
-                f"Unable to load records: {exc}"
-            )
-
-            editor_df = pd.DataFrame()
-            total_count = None
-
-        # ----------------------------------------------------
-        # PAGE CALCULATION
-        # ----------------------------------------------------
-
-        if total_count is not None:
-
-            total_pages = max(
-                1,
-                int(
-                    np.ceil(
-                        total_count
-                        / page_size
-                    )
-                ),
-            )
-
-        else:
-
-            total_pages = (
-                max(
-                    1,
-                    editor_page,
-                )
-                if len(editor_df) >= page_size
-                else editor_page
-            )
-
-        # ----------------------------------------------------
-        # PAGE NAVIGATION
-        # ----------------------------------------------------
-
-        nav1, nav2, nav3, nav4, nav5 = st.columns(
-            [1, 1, 2, 1, 1]
-        )
-
-        with nav1:
-
-            previous_page = st.button(
-                "← Previous",
-                disabled=editor_page <= 1,
-                use_container_width=True,
-            )
-
-        with nav2:
-
-            next_disabled = (
-                editor_page >= total_pages
-                if total_count is not None
-                else len(editor_df) < page_size
-            )
-
-            next_page = st.button(
-                "Next →",
-                disabled=next_disabled,
-                use_container_width=True,
-            )
-
-        if previous_page:
-
-            st.session_state.editor_page = max(
-                1,
-                editor_page - 1,
-            )
-
-            st.rerun()
-
-        if next_page:
-
-            st.session_state.editor_page = (
-                editor_page + 1
-            )
-
-            st.rerun()
-
-        with nav3:
-
-            if total_count is not None:
-
-                first_row = (
-                    (editor_page - 1)
-                    * page_size
-                    + 1
-                )
-
-                last_row = min(
-                    editor_page * page_size,
-                    total_count,
-                )
-
-                st.caption(
-                    f"Rows {first_row:,}–{last_row:,} "
-                    f"of {total_count:,}"
-                )
-
-            else:
-
-                st.caption(
-                    f"Page {editor_page}"
-                )
-
-        with nav4:
-
-            new_page = st.number_input(
-                "Page",
-                min_value=1,
-                max_value=max(
-                    1,
-                    total_pages,
-                ),
-                value=editor_page,
-                step=1,
-                label_visibility="collapsed",
-            )
-
-        with nav5:
-
-            page_sizes = [
-                100,
-                300,
-                500,
-                1000,
-            ]
-
-            selected_page_size = st.selectbox(
-                "Rows",
-                page_sizes,
-                index=page_sizes.index(
-                    st.session_state.editor_page_size
-                )
-                if st.session_state.editor_page_size
-                in page_sizes
-                else 1,
-                label_visibility="collapsed",
-            )
-
-        if new_page != editor_page:
-
-            st.session_state.editor_page = int(
-                new_page
-            )
-
-            st.rerun()
-
-        if selected_page_size != st.session_state.editor_page_size:
-
-            st.session_state.editor_page_size = (
-                selected_page_size
-            )
-
-            st.session_state.editor_page = 1
-
-            st.rerun()
-
-        # ----------------------------------------------------
-        # EDITOR
-        # ----------------------------------------------------
-
-        if editor_df.empty:
-
-            st.info(
-                "No records found for the selected filters."
-            )
-
-        else:
-
-            # Keep an immutable snapshot of the currently
-            # displayed page.
-            original_page_df = editor_df.copy()
-
-            st.caption(
-                "Edit cells directly. Changes remain pending "
-                "until you press Sync."
-            )
-
-            grid_options = create_grid_options(
-                df=editor_df,
-                primary_col=primary_col,
-                editable=can_edit,
-                selected_ids=set(),
-            )
-
-            grid_result = AgGrid(
-                editor_df,
-                gridOptions=grid_options,
-                data_return_mode=DataReturnMode.AS_INPUT,
-                update_mode=(
-                    GridUpdateMode.VALUE_CHANGED
-                    | GridUpdateMode.SELECTION_CHANGED
-                ),
-                fit_columns_on_grid_load=False,
-                allow_unsafe_jscode=True,
-                enable_enterprise_modules=False,
-                height=650,
-                theme="streamlit",
-                key=(
-                    f"editor_grid_"
-                    f"{st.session_state.editor_query_version}_"
-                    f"{editor_page}_"
-                    f"{st.session_state.editor_page_size}"
-                ),
-            )
-
-            edited_page_df = grid_result.get(
-                "data",
-                editor_df,
-            )
-
-            # ------------------------------------------------
-            # Capture edits
-            # ------------------------------------------------
-
-            if can_edit:
-
-                capture_grid_changes(
-                    original_df=original_page_df,
-                    edited_df=edited_page_df,
-                )
-
-            # ------------------------------------------------
-            # Selected rows
-            # ------------------------------------------------
-
-            selected_rows = grid_result.get(
-                "selected_rows",
-                [],
-            )
-
-            if selected_rows is None:
-                selected_rows = []
-
-            selected_ids = []
-
-            for row in selected_rows:
-
-                selected_id = clean_value(
-                    row.get(primary_col)
-                    if primary_col
-                    else None
-                )
-
-                if selected_id is not None:
-                    selected_ids.append(
-                        selected_id
-                    )
-
-            # ------------------------------------------------
-            # Delete selected
-            # ------------------------------------------------
-
-            if can_delete:
-
-                if st.button(
-                    f"🗑️ Delete Selected "
-                    f"({len(selected_ids)})",
-                    disabled=not selected_ids,
-                    type="secondary",
-                ):
-
-                    for selected_id in selected_ids:
-                        add_pending_delete(
-                            selected_id
-                        )
-
-                    st.success(
-                        f"{len(selected_ids)} record(s) "
-                        "marked for deletion."
-                    )
-
-                    st.rerun()
-
-    # ========================================================
-    # ADD NEW ROW
-    # ========================================================
-
-    if can_add:
-
-        st.divider()
-
-        with st.expander(
-            "➕ Add New Record",
-            expanded=False,
-        ):
-
-            st.caption(
-                "Enter values for a new record. "
-                "The row is not written to Supabase until Sync."
-            )
-
-            # Use all table columns, but avoid automatic fields.
-            editable_insert_columns = [
-                column
-                for column in table_columns
-                if column.lower()
-                not in {
-                    "updated_at",
-                    "created_at",
-                }
-            ]
-
-            if primary_col in editable_insert_columns:
-
-                st.caption(
-                    f"{primary_col} should normally be entered "
-                    "if it is not database-generated."
-                )
-
-            insert_values = {}
-
-            # 3-column layout makes a large schema more compact.
-            insert_columns = st.columns(3)
-
-            for index, column in enumerate(
-                editable_insert_columns
-            ):
-
-                with insert_columns[
-                    index % 3
-                ]:
-
-                    insert_values[column] = st.text_input(
-                        column,
-                        key=f"new_record_{column}",
-                    )
-
-            if st.button(
-                "Add to Pending Inserts",
-                type="primary",
-                use_container_width=True,
-            ):
-
-                record = {}
-
-                for column, value in insert_values.items():
-
-                    if (
-                        value is not None
-                        and str(value).strip() != ""
-                    ):
-
-                        record[column] = value
-
-                if not record:
-
-                    st.warning(
-                        "Please enter at least one value."
-                    )
-
-                else:
-
-                    add_pending_insert(
-                        record
-                    )
-
-                    # Clear widgets for next new row.
-                    for column in editable_insert_columns:
-
-                        key = f"new_record_{column}"
-
-                        if key in st.session_state:
-                            st.session_state[key] = ""
-
-                    st.success(
-                        "New record added to pending inserts."
-                    )
-
-                    st.rerun()
-
-    # ========================================================
-    # PENDING CHANGE PREVIEW
-    # ========================================================
-
-    if pending_changes_count():
-
-        st.divider()
-
-        st.subheader(
-            "Pending Changes"
-        )
-
-        # ----------------------------------------------------
-        # Updates
-        # ----------------------------------------------------
-
-        if st.session_state.pending_updates:
-
-            st.markdown(
-                f"**UPDATE — "
-                f"{len(st.session_state.pending_updates):,} record(s)**"
-            )
-
-            update_preview = []
-
-            for primary_id, changes in (
-                st.session_state.pending_updates.items()
-            ):
-
-                row = {
-                    "Action": "UPDATE",
-                    primary_col or "PatientID": primary_id,
-                    "Changes": "; ".join(
-                        f"{key}={value}"
-                        for key, value in changes.items()
-                    ),
-                }
-
-                update_preview.append(
-                    row
-                )
-
-            st.dataframe(
-                pd.DataFrame(update_preview),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        # ----------------------------------------------------
-        # Inserts
-        # ----------------------------------------------------
-
-        if st.session_state.pending_inserts:
-
-            st.markdown(
-                f"**INSERT — "
-                f"{len(st.session_state.pending_inserts):,} record(s)**"
-            )
-
-            insert_preview = pd.DataFrame(
-                st.session_state.pending_inserts
-            )
-
-            st.dataframe(
-                insert_preview,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        # ----------------------------------------------------
-        # Deletes
-        # ----------------------------------------------------
-
-        if st.session_state.pending_deletes:
-
-            st.markdown(
-                f"**DELETE — "
-                f"{len(st.session_state.pending_deletes):,} record(s)**"
-            )
-
-            delete_preview = pd.DataFrame(
-                {
-                    primary_col or "PatientID":
-                        list(
-                            st.session_state.pending_deletes
-                        )
-                }
-            )
-
-            st.dataframe(
-                delete_preview,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        # ----------------------------------------------------
-        # SYNC
-        # ----------------------------------------------------
-
-        sync_col1, sync_col2 = st.columns(
-            [2, 1]
-        )
-
-        with sync_col1:
-
-            if st.button(
-                f"💾 Sync All Changes ({total_pending})",
-                type="primary",
-                use_container_width=True,
-            ):
-
-                with st.spinner(
-                    "Synchronizing changes..."
-                ):
-
-                    try:
-
-                        (
-                            success_count,
-                            attempted_count,
-                            errors,
-                        ) = sync_pending_changes()
-
-                        if errors:
-
-                            st.warning(
-                                f"{success_count} operation(s) "
-                                "completed, but some operations failed."
-                            )
-
-                            for error in errors:
-                                st.error(error)
-
-                        else:
-
-                            st.success(
-                                f"{success_count} operation(s) "
-                                "synchronized successfully."
-                            )
-
-                        if success_count:
-
-                            st.session_state.editor_query_version += 1
-
-                            st.rerun()
-
-                    except Exception as exc:
-
-                        st.error(
-                            f"Synchronization failed: {exc}"
-                        )
-
-        with sync_col2:
-
-            if st.button(
-                "Discard",
-                use_container_width=True,
-            ):
-
-                clear_pending_changes()
-
-                st.rerun()
-
-
-# ============================================================
-# EXPLORER TAB
-# ============================================================
-
-with explorer_tab:
-
-    st.subheader(
-        "🔎 Database Explorer"
-    )
-
-    st.caption(
-        "Explorer uses server-side filtering and pagination. "
-        "It does not load the complete table into the browser."
-    )
-
-    # --------------------------------------------------------
-    # Explorer filters
-    # --------------------------------------------------------
-
-    with st.expander(
-        "Explorer Filters",
-        expanded=True,
-    ):
-
-        e1, e2, e3, e4 = st.columns(4)
-
-        with e1:
-
-            explorer_keyword = st.text_input(
-                "Keyword",
-                placeholder="Search PatientID or other fields",
-                key="explorer_keyword",
-            )
-
-        with e2:
-
-            explorer_column = st.selectbox(
-                "Search Column",
-                [
-                    "All columns",
-                    *table_columns,
-                ],
-                key="explorer_column",
-            )
-
-        with e3:
-
-            explorer_date_from = st.date_input(
-                "Date From",
-                value=None,
-                key="explorer_date_from",
-            )
-
-        with e4:
-
-            explorer_date_to = st.date_input(
-                "Date To",
-                value=None,
-                key="explorer_date_to",
-            )
-
-        if st.button(
-            "🔎 Search",
-            type="primary",
-            use_container_width=True,
-        ):
-
-            st.session_state.explorer_query_version += 1
-            st.rerun()
-
-    # --------------------------------------------------------
-    # Explorer query
-    # --------------------------------------------------------
-
-    explorer_client = get_user_client()
-
-    explorer_query = (
-        explorer_client
-        .table(TABLE_NAME)
-        .select("*")
-    )
-
-    # Date filters
-    if date_col:
-
-        if explorer_date_from:
-
-            explorer_query = explorer_query.gte(
-                date_col,
-                explorer_date_from.isoformat(),
-            )
-
-        if explorer_date_to:
-
-            explorer_query = explorer_query.lt(
-                date_col,
-                (
-                    explorer_date_to
-                    + timedelta(days=1)
-                ).isoformat(),
-            )
-
-    # Keyword
-    if explorer_keyword.strip():
-
-        keyword = (
-            explorer_keyword
-            .strip()
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
-
-        if (
-            explorer_column != "All columns"
-            and explorer_column in table_columns
-        ):
-
-            explorer_query = explorer_query.ilike(
-                explorer_column,
-                f"%{keyword}%",
-            )
-
-        else:
-
-            # Search selected practical columns instead of
-            # generating a very large OR expression across
-            # all ~150 columns.
-            searchable_columns = [
-                column
-                for column in [
-                    primary_col,
-                    resolve_column(
-                        table_columns,
-                        "tsp",
-                        "Tsp",
-                        "TSP",
-                    ),
-                    resolve_column(
-                        table_columns,
-                        "approach",
-                        "Approach",
-                    ),
-                    resolve_column(
-                        table_columns,
-                        "team",
-                        "Team",
-                    ),
-                    resolve_column(
-                        table_columns,
-                        "case",
-                        "Case",
-                    ),
-                    resolve_column(
-                        table_columns,
-                        "wardvillage",
-                        "WardVillage",
-                    ),
-                ]
-                if column
-            ]
-
-            if searchable_columns:
-
-                or_conditions = ",".join(
-                    f"{column}.ilike.%{keyword}%"
-                    for column in searchable_columns
-                )
-
-                explorer_query = explorer_query.or_(
-                    or_conditions
-                )
-
-    if primary_col:
-
-        explorer_query = explorer_query.order(
-            primary_col,
-            desc=True,
-        )
-
-    # --------------------------------------------------------
-    # Explorer display query
-    # --------------------------------------------------------
+    query = client.table(table_choice).select(select_str, count="exact")
+
+    if search_term.strip():
+        s = search_term.strip()
+        or_clauses = [f"{pk_col}.ilike.%{s}%"]
+        if name_col:
+            or_clauses.append(f"{name_col}.ilike.%{s}%")
+        if tsp_col:
+            or_clauses.append(f"{tsp_col}.ilike.%{s}%")
+        query = query.or_(",".join(or_clauses))
+
+    start_idx = (page_num - 1) * page_size
+    end_idx = start_idx + page_size - 1
 
     try:
-
-        explorer_response = (
-            explorer_query
-            .range(
-                0,
-                EXPLORER_DISPLAY_LIMIT - 1,
-            )
-            .execute()
-        )
-
-        explorer_df = pd.DataFrame(
-            explorer_response.data or []
-        )
-
+        res = query.order(pk_col, desc=True).range(start_idx, end_idx).execute()
+        df_page = pd.DataFrame(res.data or [])
+        total_count = res.count or len(df_page)
     except Exception as exc:
+        st.error(f"Query Error: {exc}")
+        df_page, total_count = pd.DataFrame(), 0
 
-        st.error(
-            f"Explorer query failed: {exc}"
+    total_pages = max(1, math.ceil(total_count / page_size))
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Matching Records (DB)", f"{total_count:,}")
+    m2.metric("Current Page", f"{page_num} of {total_pages:,}")
+    m3.metric("Page RAM Footprint", f"{df_page.memory_usage(deep=True).sum() / 1024:.1f} KB")
+
+    st.dataframe(df_page, use_container_width=True, hide_index=False)
+
+    if not df_page.empty:
+        csv_bytes = df_page.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "📄 Download Current Page CSV",
+            data=csv_bytes,
+            file_name=f"{table_choice}_page_{page_num}.csv",
+            mime="text/csv",
         )
 
-        explorer_df = pd.DataFrame()
 
-    # --------------------------------------------------------
-    # Display
-    # --------------------------------------------------------
+@st.fragment
+def render_editor_tab():
+    st.subheader("🩺 Paginated Record Editor & Validated UserForm")
+    cols = get_table_columns(TABLE_NAME)
+    primary_key = resolve_column(cols, "PatientID", "patientid", "patient_id") or "PatientID"
+    date_column = resolve_column(cols, "Date", "date")
 
-    if explorer_df.empty:
+    filter_columns = {
+        "Visit No": (resolve_column(cols, "visitno", "Visit_no"), "visit_no_list"),
+        "SR No": (resolve_column(cols, "srno", "Sr_No"), "sr_no_list"),
+        "Team": (resolve_column(cols, "team", "Team"), "team_list"),
+        "TSP": (resolve_column(cols, "tsp", "Tsp", "TSP"), "tsp_list"),
+        "Approach": (resolve_column(cols, "approach", "Approach"), "approach_list"),
+        "Case": (resolve_column(cols, "case", "Case"), "case_list"),
+    }
 
-        st.info(
-            "No records found."
+    # Instant 1-query filter options from SQL View
+    view_opts = get_all_filter_options()
+    fv = st.session_state.filter_version
+
+    fc1, fc2, fc3 = st.columns(3)
+    active_filters = {}
+
+    with fc1:
+        pid_search = st.text_input("🔎 Search Patient ID (Exact or Prefix)", key=f"pid_s_{fv}")
+        for lbl in ["Visit No", "SR No"]:
+            col_name, view_key = filter_columns[lbl]
+            if col_name:
+                active_filters[col_name] = st.multiselect(lbl, view_opts.get(view_key, []), key=f"f_{lbl}_{fv}")
+
+    with fc2:
+        for lbl in ["Team", "TSP", "Approach"]:
+            col_name, view_key = filter_columns[lbl]
+            if col_name:
+                active_filters[col_name] = st.multiselect(lbl, view_opts.get(view_key, []), key=f"f_{lbl}_{fv}")
+
+    with fc3:
+        col_case, case_key = filter_columns["Case"]
+        if col_case:
+            active_filters[col_case] = st.multiselect("Case", view_opts.get(case_key, []), key=f"f_Case_{fv}")
+        d_col1, d_col2 = st.columns(2)
+        date_from = d_col1.date_input("Date From", value=None, key=f"df_{fv}")
+        date_to = d_col2.date_input("Date To", value=None, key=f"dt_{fv}")
+
+    # Pagination Bar + Reset
+    p_col1, p_col2, p_col3 = st.columns([1, 1, 2])
+    with p_col1:
+        ed_page_size = st.selectbox("Editor Page Size", [50, 100, 250], index=1, key="ed_ps")
+    with p_col2:
+        ed_page_num = st.number_input("Editor Page #", min_value=1, value=1, step=1, key="ed_pn")
+    with p_col3:
+        st.write("")
+        if st.button("🔄 Reset Filters & Reload", use_container_width=True):
+            st.session_state.filter_version += 1
+            st.session_state.grid_version += 1
+            st.rerun()
+
+    # Build Paginated Server-Side Query
+    client = get_user_client()
+    query = client.table(TABLE_NAME).select("*", count="exact")
+
+    if pid_search.strip():
+        query = query.ilike(primary_key, f"%{pid_search.strip()}%")
+    for c_name, vals in active_filters.items():
+        if vals:
+            query = query.in_(c_name, vals)
+    if date_column and date_from:
+        query = query.gte(date_column, date_from.isoformat())
+    if date_column and date_to:
+        query = query.lt(date_column, (date_to + timedelta(days=1)).isoformat())
+
+    start_idx = (ed_page_num - 1) * ed_page_size
+    end_idx = start_idx + ed_page_size - 1
+
+    res = query.order(primary_key, desc=True).range(start_idx, end_idx).execute()
+    df_edit_view = pd.DataFrame(res.data or [])
+    total_matches = res.count or len(df_edit_view)
+    total_ed_pages = max(1, math.ceil(total_matches / ed_page_size))
+
+    # --- USERFORM LAUNCHER BAR ---
+    st.divider()
+    uf_col1, uf_col2, uf_col3 = st.columns([2, 1, 1])
+    with uf_col1:
+        pid_options = df_edit_view[primary_key].dropna().astype(str).tolist() if not df_edit_view.empty else []
+        selected_pid_for_form = st.selectbox(
+            "Select Patient ID (from current page) for Validated UserForm",
+            options=pid_options,
+            index=0 if pid_options else None,
         )
+    with uf_col2:
+        st.write("")
+        if st.button("📋 Open Patient UserForm", type="primary", disabled=(not selected_pid_for_form or not can_edit), use_container_width=True):
+            matched_row = df_edit_view[df_edit_view[primary_key].astype(str) == str(selected_pid_for_form)].iloc[0].to_dict()
+            open_patient_userform(mode="edit", patient_row=matched_row, primary_key=primary_key)
+    with uf_col3:
+        st.write("")
+        if st.button("➕ New Patient UserForm", disabled=not can_add, use_container_width=True):
+            open_patient_userform(mode="create", patient_row={}, primary_key=primary_key)
 
-    else:
+    st.divider()
 
-        st.success(
-            f"Showing up to "
-            f"{EXPLORER_DISPLAY_LIMIT:,} matching records."
-        )
+    # --- SPREADSHEET GRID EDITOR ---
+    if not df_edit_view.empty:
+        st.caption(f"Showing Page **{ed_page_num} of {total_ed_pages:,}** ({len(df_edit_view)} rows loaded out of **{total_matches:,}** total matching records).")
+        st.session_state.editor_source_df = df_edit_view.copy()
 
-        st.dataframe(
-            explorer_df,
+        protected_for_editor = [primary_key, "UniqueKey", "Sr_No", "updated_at"]
+        if user_role == "admin":
+            disabled_cols = ["updated_at"] if "updated_at" in df_edit_view.columns else []
+        elif user_role == "editor":
+            disabled_cols = [c for c in protected_for_editor if c in df_edit_view.columns]
+        else:
+            disabled_cols = list(df_edit_view.columns)
+
+        edited_df = st.data_editor(
+            df_edit_view,
+            key=f"editor_grid_{st.session_state.grid_version}_{ed_page_num}",
             use_container_width=True,
             hide_index=True,
-            height=650,
+            num_rows="dynamic" if can_add else "fixed",
+            disabled=disabled_cols,
         )
+        if can_edit:
+            capture_editor_changes(st.session_state.editor_source_df, edited_df, primary_key)
 
-        # ----------------------------------------------------
-        # CSV EXPORT
-        # ----------------------------------------------------
+    # Render Pending Grid Queue
+    pending_rows = []
+    for pid, chg in st.session_state.pending_updates.items():
+        pending_rows.append({"Action": "UPDATE", primary_key: pid, **chg})
+    for r in st.session_state.pending_inserts:
+        pending_rows.append({"Action": "INSERT", **r})
+    for pid in sorted(st.session_state.pending_deletes):
+        pending_rows.append({"Action": "DELETE", primary_key: pid})
+
+    if pending_rows:
+        st.subheader(f"📝 Pending Grid Changes ({len(pending_rows)})")
+        st.dataframe(pd.DataFrame(pending_rows), use_container_width=True)
+        b_sync, b_disc = st.columns(2)
+        with b_sync:
+            if st.button("💾 Commit Grid Changes to Supabase", type="primary", disabled=not can_edit, use_container_width=True):
+                sync_client = get_user_client()
+                errors, success_cnt = [], 0
+
+                for pid, u_data in list(st.session_state.pending_updates.items()):
+                    try:
+                        payload = serialize_dataframe_for_supabase(pd.DataFrame([u_data]))[0]
+                        sync_client.table(TABLE_NAME).update(payload).eq(primary_key, pid).execute()
+                        success_cnt += 1
+                        st.session_state.pending_updates.pop(pid, None)
+                    except Exception as e:
+                        errors.append(f"UPDATE {pid}: {e}")
+
+                if st.session_state.pending_inserts and can_add:
+                    try:
+                        payloads = serialize_dataframe_for_supabase(pd.DataFrame(st.session_state.pending_inserts))
+                        sync_client.table(TABLE_NAME).insert(payloads).execute()
+                        success_cnt += len(payloads)
+                        st.session_state.pending_inserts = []
+                    except Exception as e:
+                        errors.append(f"INSERT Error: {e}")
+
+                if st.session_state.pending_deletes and can_delete:
+                    try:
+                        del_list = list(st.session_state.pending_deletes)
+                        sync_client.table(TABLE_NAME).delete().in_(primary_key, del_list).execute()
+                        success_cnt += len(del_list)
+                        st.session_state.pending_deletes.clear()
+                    except Exception as e:
+                        errors.append(f"DELETE Error: {e}")
+
+                if success_cnt:
+                    get_all_filter_options.clear()
+                    st.session_state.grid_version += 1
+                    st.success(f"Successfully synced {success_cnt} operation(s)!")
+                    if not errors:
+                        st.rerun()
+                for err in errors:
+                    st.error(err)
+
+        with b_disc:
+            if st.button("↩️ Discard Pending Changes", use_container_width=True):
+                clear_pending_changes()
+                st.rerun()
+
+
+@st.fragment
+def render_bulk_upload_tab():
+    st.subheader("📤 Bulk Excel Upload & Low-Memory Reconciliation")
+    if not can_edit:
+        st.warning("You need `editor` or `admin` permissions to run bulk synchronizations.")
+
+    uploaded_file = st.file_uploader("Upload Excel File (`.xlsx`, `.xlsm`)", type=["xlsx", "xlsm"])
+
+    if uploaded_file:
+        excel_obj = pd.ExcelFile(uploaded_file)
+        sheet_names = excel_obj.sheet_names
+        default_idx = sheet_names.index("YgnTBPro") if "YgnTBPro" in sheet_names else 0
+
+        col_s1, col_s2 = st.columns([2, 1])
+        with col_s1:
+            selected_sheet = st.selectbox("Select Worksheet", sheet_names, index=default_idx)
+        with col_s2:
+            sim_threshold = st.slider("Fuzzy Column Match Threshold (%)", min_value=10.0, max_value=100.0, value=80.0, step=5.0)
+
+        @st.cache_data(show_spinner=False)
+        def load_and_prep_excel(file_bytes, sheet, threshold):
+            df_raw_xl = pd.read_excel(file_bytes, sheet_name=sheet)
+            df_aligned, df_matching, df_unmatching = align_dataframe_columns(df_raw_xl, PRIMARY_COLUMNS, threshold=threshold)
+            df_clean, df_error = clean_and_assign_dtypes(df_aligned)
+            return df_clean, df_matching, df_unmatching, df_error
+
+        with st.spinner("Aligning schema and validating data types..."):
+            df_clean, df_matching, df_unmatching, df_error = load_and_prep_excel(
+                uploaded_file, selected_sheet, sim_threshold
+            )
+
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("Excel Rows", f"{len(df_clean):,}")
+        p2.metric("Matched Columns", f"{len(df_matching)} / {len(PRIMARY_COLUMNS)}")
+        dup_xl = df_clean["PatientID"].dropna().duplicated().sum() if "PatientID" in df_clean.columns else 0
+        p3.metric("Duplicate PatientIDs (Excel)", f"{dup_xl}")
+        p4.metric("Type Conversion Errors", f"{len(df_error.columns)}")
+
+        with st.expander("🔍 View Column Alignment & Unparseable Type Errors", expanded=not df_error.empty):
+            ac1, ac2 = st.columns(2)
+            with ac1:
+                st.write("**Matched Columns**")
+                st.dataframe(df_matching, use_container_width=True, height=200)
+            with ac2:
+                st.write("**Unmatched Primary vs. Dropped Excel Columns**")
+                st.dataframe(df_unmatching, use_container_width=True, height=200)
+            if not df_error.empty:
+                st.error("⚠️ Unparseable values coerced to `None`/`NaT`:")
+                st.dataframe(df_error, use_container_width=True)
 
         st.divider()
 
-        st.subheader(
-            "CSV Export"
-        )
+        token = getattr(st.session_state.session, "access_token", None)
 
-        st.caption(
-            "Export uses the current Explorer filters. "
-            "Only the export operation retrieves all matching rows."
-        )
+        if st.button("⚖️ Run Smart Memory-Optimized Reconciliation", use_container_width=True):
+            with st.spinner("Fetching matching records and ID index from Supabase..."):
+                excel_pids = df_clean["PatientID"].dropna().astype(str).str.strip().unique().tolist()
+                # 1. Fetch full rows ONLY for IDs present in the Excel file
+                df_supa_matched = fetch_supabase_by_ids(TABLE_NAME, excel_pids, SUPABASE_URL, SUPABASE_KEY, access_token=token)
+                # 2. Fetch lightweight ID set for '_Not in Excel' detection
+                all_supa_ids = fetch_all_patient_ids_only(TABLE_NAME, SUPABASE_URL, SUPABASE_KEY, access_token=token)
 
-        if st.button(
-            "⬇️ Prepare CSV Export",
-            use_container_width=True,
-        ):
-
-            try:
-
-                rows = []
-
-                start = 0
-
-                while True:
-
-                    end = (
-                        start
-                        + CSV_BATCH_SIZE
-                        - 1
+                diff_log = compare_data_fast(df_clean, df_supa_matched, id_col="PatientID")
+                # Append any orphaned IDs in Supabase that were not in the Excel upload
+                missing_in_xl = sorted(list(all_supa_ids - set(excel_pids)))
+                if missing_in_xl:
+                    orphan_df = pd.DataFrame(
+                        [[pid, "_Not in Excel", None, pid] for pid in missing_in_xl],
+                        columns=["PatientID", "ColumnName", "Value_Excel", "Value_Supabase"],
                     )
+                    diff_log = pd.concat([diff_log, orphan_df], ignore_index=True)
 
-                    response = (
-                        explorer_query
-                        .range(
-                            start,
-                            end,
-                        )
-                        .execute()
-                    )
+                st.session_state["reconcile_log"] = diff_log
 
-                    batch = response.data or []
+        if "reconcile_log" in st.session_state:
+            log_df = st.session_state["reconcile_log"]
+            if log_df.empty:
+                st.success("🎉 Excel file and Supabase table are 100% identical!")
+            else:
+                st.subheader(f"📊 Reconciliation Summary ({len(log_df):,} Differences)")
+                summary_counts = log_df["ColumnName"].value_counts().reset_index()
+                summary_counts.columns = ["Discrepancy / Column", "Count"]
 
-                    if not batch:
-                        break
+                rc1, rc2 = st.columns([1, 2])
+                with rc1:
+                    st.dataframe(summary_counts, use_container_width=True, height=280)
+                with rc2:
+                    st.dataframe(log_df, use_container_width=True, height=280)
 
-                    rows.extend(
-                        batch
-                    )
-
-                    if len(batch) < CSV_BATCH_SIZE:
-                        break
-
-                    start += CSV_BATCH_SIZE
-
-                export_df = pd.DataFrame(
-                    rows
+                # Delta-only upsert list: only rows that are new or have at least 1 changed cell!
+                changed_pids = set(
+                    log_df.loc[log_df["ColumnName"] != "_Not in Excel", "PatientID"].dropna().astype(str).unique()
                 )
+                df_delta = df_clean[df_clean["PatientID"].astype(str).str.strip().isin(changed_pids)]
+                not_in_excel_ids = log_df.loc[log_df["ColumnName"] == "_Not in Excel", "PatientID"].dropna().unique().tolist()
 
-                csv_data = export_df.to_csv(
-                    index=False
-                ).encode(
-                    "utf-8-sig"
-                )
+                st.divider()
+                st.subheader("🚀 Execute Bulk Database Actions")
+                act_col1, act_col2 = st.columns(2)
 
-                st.download_button(
-                    label=(
-                        f"⬇️ Download CSV "
-                        f"({len(export_df):,} rows)"
-                    ),
-                    data=csv_data,
-                    file_name=(
-                        f"{TABLE_NAME}_export_"
-                        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                    ),
-                    mime="text/csv",
-                    use_container_width=True,
-                )
+                with act_col1:
+                    if st.button(
+                        f"⚡ Delta Upsert Only Changed/New Rows ({len(df_delta):,} of {len(df_clean):,})",
+                        type="primary",
+                        disabled=(not can_edit or df_delta.empty),
+                        use_container_width=True,
+                    ):
+                        sync_client = get_user_client()
+                        records = serialize_dataframe_for_supabase(df_delta, DATE_COLUMNS)
+                        batch_size = 500
+                        total_batches = max(1, (len(records) + batch_size - 1) // batch_size)
+                        prog = st.progress(0, text="Starting delta batch upsert...")
 
-            except Exception as exc:
+                        try:
+                            for idx, i in enumerate(range(0, len(records), batch_size)):
+                                chunk = records[i : i + batch_size]
+                                sync_client.table(TABLE_NAME).upsert(chunk, on_conflict="PatientID").execute()
+                                prog.progress((idx + 1) / total_batches, text=f"Upserted batch {idx + 1}/{total_batches}...")
 
-                st.error(
-                    f"CSV export failed: {exc}"
-                )
+                            get_all_filter_options.clear()
+                            st.success(f"✅ Synced {len(records):,} modified/new records in seconds!")
+                        except Exception as e:
+                            st.error(f"❌ Batch Upsert Failed: {e}")
+
+                with act_col2:
+                    if not_in_excel_ids:
+                        if st.button(
+                            f"🗑️ Delete {len(not_in_excel_ids)} Orphaned Row(s) (`_Not in Excel`)",
+                            disabled=not can_delete,
+                            use_container_width=True,
+                        ):
+                            sync_client = get_user_client()
+                            try:
+                                for i in range(0, len(not_in_excel_ids), 200):
+                                    batch_ids = not_in_excel_ids[i : i + 200]
+                                    sync_client.table(TABLE_NAME).delete().in_("PatientID", batch_ids).execute()
+                                get_all_filter_options.clear()
+                                st.success(f"✅ Deleted {len(not_in_excel_ids)} record(s) from `{TABLE_NAME}`.")
+                            except Exception as e:
+                                st.error(f"❌ Delete Failed: {e}")
+                    else:
+                        st.info("No orphaned records (`_Not in Excel`) to delete.")
 
 
 # ============================================================
-# FOOTER
+# 8. MAIN TAB ROUTER
 # ============================================================
 
-st.divider()
+tabs = st.tabs([
+    "💾 Explorer & Search",
+    "✏️ Data Editor & UserForm",
+    "📤 Bulk Upload & Reconcile (Excel)",
+])
 
-footer_col1, footer_col2 = st.columns(2)
+with tabs[0]:
+    render_explorer_tab()
 
-with footer_col1:
+with tabs[1]:
+    render_editor_tab()
 
-    st.caption(
-        f"Table: `{TABLE_NAME}`"
-    )
-
-with footer_col2:
-
-    st.caption(
-        f"Authenticated user: "
-        f"{current_email or 'Unknown'}"
-    )
+with tabs[2]:
+    render_bulk_upload_tab()
