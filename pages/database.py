@@ -21,11 +21,8 @@ from functions import (
 # 1. CONFIGURATION & PAGE SETUP
 # ============================================================
 
-st.set_page_config(
-    page_title="YgnTBPro Database Management System",
-    page_icon="🩺",
-    layout="wide",
-)
+# NOTE: st.set_page_config() must NOT be called in individual page files
+# when using st.navigation() in app.py. It is already configured there.
 
 SUPABASE_URL = st.secrets.get(
     "SUPABASE_URL_ygntbpro",
@@ -449,12 +446,18 @@ def open_patient_userform(mode: str, patient_row: dict, primary_key: str):
 # ============================================================
 
 def values_equal(left, right) -> bool:
-    if pd.isna(left) and pd.isna(right):
-        return True
+    try:
+        if pd.isna(left) and pd.isna(right):
+            return True
+    except (TypeError, ValueError):
+        pass
     return str(left).strip() == str(right).strip()
 
 def clean_value(value):
-    return None if pd.isna(value) else value
+    try:
+        return None if pd.isna(value) else value
+    except (TypeError, ValueError):
+        return value
 
 def clear_pending_changes():
     st.session_state.pending_updates = {}

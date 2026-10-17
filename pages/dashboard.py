@@ -198,10 +198,10 @@ def options_for(df: pd.DataFrame, col: str):
         return []
     values = (
         df[col].dropna().astype(str).str.strip()
-        .replace({"nan": "blank", "None": "blank", "": "blank"})
-        .unique().tolist()
     )
-    return sorted(values)
+    # Drop entries that are textual representations of missing values
+    values = values[~values.str.lower().isin(["", "nan", "none", "<na>", "nat"])]
+    return sorted(values.unique().tolist())
 
 
 def safe_plotly(fig):
@@ -261,14 +261,12 @@ with st.sidebar:
 
     date_from = st.date_input(
         "From",
-        value=st.session_state["filter_date_from"],
         min_value=min_date,
         max_value=max_date,
         key="filter_date_from",
     )
     date_to = st.date_input(
         "To",
-        value=st.session_state["filter_date_to"],
         min_value=min_date,
         max_value=max_date,
         key="filter_date_to",
@@ -314,6 +312,13 @@ for col, selected in selections.items():
         target_df = target_df[
             target_df[col].astype(str).str.strip().isin(selected)
         ]
+
+if filtered_df.empty:
+    st.warning(
+        "No records match the current filters. "
+        "Please adjust the date range or filter selections."
+    )
+    st.stop()
 
 filtered_df["Symptom"] = classify_symptomatic(filtered_df, COLUMN_SYMPTOM)
 

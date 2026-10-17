@@ -476,46 +476,46 @@ def fetch_all_patient_ids_only(
 #     return None
 
 def normalize(val):
-  if pd.isna(val):
-    return ""
-  s = str(val).strip()
-  if s.lower() in MISSING_STRINGS:
-    return ""
-  try:
-    f = float(s)
-    return str(int(f)) if f.is_integer() else str(f)
-  except (ValueError, TypeError):
-    return s
-      
+    if pd.isna(val):
+        return ""
+    s = str(val).strip()
+    if s.lower() in MISSING_STRINGS:
+        return ""
+    try:
+        f = float(s)
+        return str(int(f)) if f.is_integer() else str(f)
+    except (ValueError, TypeError):
+        return s
+
 def clean_missing(df: pd.DataFrame) -> pd.DataFrame:
-  df = df.copy()
-  non_datetime_cols = [col for col in df.columns if not pd.api.types.is_datetime64_any_dtype(df[col])]
-  for col in non_datetime_cols:
-    df[col] = df[col].astype(str).str.strip()
-  df[non_datetime_cols] = df[non_datetime_cols].replace({s: "" for s in MISSING_STRINGS})
-  return df
+    df = df.copy()
+    non_datetime_cols = [col for col in df.columns if not pd.api.types.is_datetime64_any_dtype(df[col])]
+    for col in non_datetime_cols:
+        df[col] = df[col].astype(str).str.strip()
+    df[non_datetime_cols] = df[non_datetime_cols].replace({s: "" for s in MISSING_STRINGS})
+    return df
 
 def function_uncode(df: pd.DataFrame, colName=None, mapping=None) -> pd.DataFrame:
-  df = clean_missing(df)
-  mapping = mapping or {}
-  if colName is None:
-    print("No columns specified for uncode. Please provide a column name or list of column names.")
-    return df
-  elif isinstance(colName, str):
-    columns = [colName]
-  else:
-    columns = list(colName)
-  for col in columns:
-    if (col not in df.columns or pd.api.types.is_datetime64_any_dtype(df[col])):
-      continue
-    if col in mapping:
-      mp = {normalize(k): v for k, v in mapping[col].items()}
-    elif col in COLUMN_DISABILITY:
-      mp = UNCODE_DISABILITY
+    df = clean_missing(df)
+    mapping = mapping or {}
+    if colName is None:
+        print("No columns specified for uncode. Please provide a column name or list of column names.")
+        return df
+    elif isinstance(colName, str):
+        columns = [colName]
     else:
-      mp = UNCODE_DEFAULT
-    df[col] = df[col].apply(lambda x: mp.get(normalize(x), x if x else ""))
-  return df
+        columns = list(colName)
+    for col in columns:
+        if (col not in df.columns or pd.api.types.is_datetime64_any_dtype(df[col])):
+            continue
+        if col in mapping:
+            mp = {normalize(k): v for k, v in mapping[col].items()}
+        elif col in COLUMN_DISABILITY:
+            mp = UNCODE_DISABILITY
+        else:
+            mp = UNCODE_DEFAULT
+        df[col] = df[col].apply(lambda x: mp.get(normalize(x), x if x else ""))
+    return df
 
 def switchingRowToColumn(df, column_name, preserved_column_list, value_col=None):
     if value_col:
