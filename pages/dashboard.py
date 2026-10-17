@@ -252,8 +252,27 @@ max_date = df_slicer["Date"].max().date()
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.header("Dashboard Filters")
-    date_from = st.date_input("From", value=min_date, min_value=min_date, max_value=max_date)
-    date_to = st.date_input("To", value=max_date, min_value=min_date, max_value=max_date)
+
+    # Initialise date keys in session state so the Clear button can reset them
+    if "filter_date_from" not in st.session_state:
+        st.session_state["filter_date_from"] = min_date
+    if "filter_date_to" not in st.session_state:
+        st.session_state["filter_date_to"] = max_date
+
+    date_from = st.date_input(
+        "From",
+        value=st.session_state["filter_date_from"],
+        min_value=min_date,
+        max_value=max_date,
+        key="filter_date_from",
+    )
+    date_to = st.date_input(
+        "To",
+        value=st.session_state["filter_date_to"],
+        min_value=min_date,
+        max_value=max_date,
+        key="filter_date_to",
+    )
 
     if date_from > date_to:
         st.error("The From date must not be later than the To date.")
@@ -265,8 +284,12 @@ with st.sidebar:
         selections[col] = st.multiselect(col, opts, default=[], key=f"filter_{col}")
 
     if st.button("Clear all filters", use_container_width=True):
+        # Reset all multiselect filters
         for col in COLUMNS_SLICER:
             st.session_state[f"filter_{col}"] = []
+        # Reset date filters back to the full data range
+        st.session_state["filter_date_from"] = min_date
+        st.session_state["filter_date_to"] = max_date
         st.rerun()
 
 # Apply filters
