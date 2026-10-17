@@ -248,28 +248,32 @@ min_date = df_slicer["Date"].min().date()
 max_date = df_slicer["Date"].max().date()
 
 # -----------------------------------------------------------------------------
-# Sidebar filters
+# Sidebar filters  — generation-counter pattern avoids session_state conflicts
 # -----------------------------------------------------------------------------
+# Each time the user clicks "Clear all filters", filter_gen is incremented.
+# All widget keys embed _gen, so Streamlit discards the old widgets and creates
+# fresh ones with their default values (empty lists / full date range).
+if "filter_gen" not in st.session_state:
+    st.session_state["filter_gen"] = 0
+
+_gen = st.session_state["filter_gen"]
+
 with st.sidebar:
     st.header("Dashboard Filters")
 
-    # Initialise date keys in session state so the Clear button can reset them
-    if "filter_date_from" not in st.session_state:
-        st.session_state["filter_date_from"] = min_date
-    if "filter_date_to" not in st.session_state:
-        st.session_state["filter_date_to"] = max_date
-
     date_from = st.date_input(
         "From",
+        value=min_date,
         min_value=min_date,
         max_value=max_date,
-        key="filter_date_from",
+        key=f"filter_date_from_{_gen}",
     )
     date_to = st.date_input(
         "To",
+        value=max_date,
         min_value=min_date,
         max_value=max_date,
-        key="filter_date_to",
+        key=f"filter_date_to_{_gen}",
     )
 
     if date_from > date_to:
@@ -279,15 +283,12 @@ with st.sidebar:
     selections = {}
     for col in COLUMNS_SLICER:
         opts = options_for(df_slicer, col)
-        selections[col] = st.multiselect(col, opts, default=[], key=f"filter_{col}")
+        selections[col] = st.multiselect(col, opts, default=[], key=f"filter_{col}_{_gen}")
 
     if st.button("Clear all filters", use_container_width=True):
-        # Reset all multiselect filters
-        for col in COLUMNS_SLICER:
-            st.session_state[f"filter_{col}"] = []
-        # Reset date filters back to the full data range
-        st.session_state["filter_date_from"] = min_date
-        st.session_state["filter_date_to"] = max_date
+        # Incrementing the generation invalidates ALL widget keys — no
+        # session_state writes to rendered widget keys, so no error.
+        st.session_state["filter_gen"] += 1
         st.rerun()
 
 # Apply filters
