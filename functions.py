@@ -290,17 +290,37 @@ def _vectorized_normalize_series(s: pd.Series) -> pd.Series:
     s_clean = s_str.str.replace(r"\.0$", "", regex=True)
     return s_clean.mask(null_mask, None)
 
+def _normalize_id_series(s: pd.Series) -> pd.Series:
+    """Consistently normalizes PatientID strings across Excel and Supabase."""
+    s_str = (
+        s.astype(str)
+        .str.replace("\r", "", regex=False)
+        .str.replace("\xa0", "", regex=False)
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+    )
+    null_mask = s.isna() | s_str.str.lower().isin(MISSING_STRINGS)
+    return s_str.mask(null_mask, None)
+
 
 def compare_data_fast(dfExcel: pd.DataFrame, dfSupabase: pd.DataFrame, id_col: str = "PatientID") -> pd.DataFrame:
     records = []
     dfE = dfExcel.copy()
     dfS = dfSupabase.copy()
 
-    if id_col not in dfE.columns or id_col not in dfS.columns:
+    if id_col not in dfE.columns:
         return pd.DataFrame(columns=["PatientID", "ColumnName", "Value_Excel", "Value_Supabase"])
 
-    dfE[id_col] = dfE[id_col].astype(str).str.strip()
-    dfS[id_col] = dfS[id_col].astype(str).str.strip()
+    # Handle case where dfS is completely empty
+    if dfS.empty or id_col not in dfS.columns:
+        dfE[id_col] = _normalize_id_series(dfE[id_col])
+        ids_E = set(dfE[id_col].dropna().unique())
+        for pid in sorted(ids_E):
+            records.append([pid, "_Not in Supabase", pid, None])
+        return pd.DataFrame(records, columns=["PatientID", "ColumnName", "Value_Excel", "Value_Supabase"])
+
+    dfE[id_col] = _normalize_id_series(dfE[id_col])
+    dfS[id_col] = _normalize_id_series(dfS[id_col])
 
     for col in DATE_COLUMNS:
         if col in dfE.columns:
@@ -308,8 +328,8 @@ def compare_data_fast(dfExcel: pd.DataFrame, dfSupabase: pd.DataFrame, id_col: s
         if col in dfS.columns:
             dfS[col] = pd.to_datetime(dfS[col], errors="coerce").dt.strftime("%Y-%m-%d")
 
-    ids_E = set(dfE[id_col].dropna().unique()) - {"", "nan", "None", "<NA>"}
-    ids_S = set(dfS[id_col].dropna().unique()) - {"", "nan", "None", "<NA>"}
+    ids_E = set(dfE[id_col].dropna().unique())
+    ids_S = set(dfS[id_col].dropna().unique())
 
     for pid in sorted(ids_E - ids_S):
         records.append([pid, "_Not in Supabase", pid, None])
@@ -318,9 +338,9 @@ def compare_data_fast(dfExcel: pd.DataFrame, dfSupabase: pd.DataFrame, id_col: s
 
     common_cols = [c for c in dfE.columns if c in dfS.columns and c not in {id_col, "updated_at"}]
 
-    # Deduplicate on ID before merging for cell comparison
-    dfE_unique = dfE.drop_duplicates(subset=[id_col]).set_index(id_col)
-    dfS_unique = dfS.drop_duplicates(subset=[id_col]).set_index(id_col)
+    # Deduplicate on normalized ID before merging for cell comparison
+    dfE_unique = dfE.dropna(subset=[id_col]).drop_duplicates(subset=[id_col]).set_index(id_col)
+    dfS_unique = dfS.dropna(subset=[id_col]).drop_duplicates(subset=[id_col]).set_index(id_col)
     common_ids = sorted(list(ids_E & ids_S))
 
     if common_ids and common_cols:
@@ -338,7 +358,6 @@ def compare_data_fast(dfExcel: pd.DataFrame, dfSupabase: pd.DataFrame, id_col: s
 
     return pd.DataFrame(records, columns=["PatientID", "ColumnName", "Value_Excel", "Value_Supabase"])
 
-# Add to the bottom of functions.py
 
 def fetch_supabase_by_ids(
     tableName: str,
@@ -347,7 +366,7 @@ def fetch_supabase_by_ids(
     key: str,
     access_token: str = None,
     id_col: str = "PatientID",
-    chunk_size: int = 300,
+    chunk_size: int = 250,
 ) -> pd.DataFrame:
     """Fetches only the rows matching the PatientIDs in the uploaded Excel file."""
     if not id_list:
@@ -361,13 +380,18 @@ def fetch_supabase_by_ids(
     }
     session = get_working_session(url, headers)
     all_rows = []
-    clean_ids = [str(x).strip() for x in id_list if pd.notna(x) and str(x).strip()]
+    clean_ids = [
+        str(x).strip().replace("\r", "").replace("\xa0", "")
+        for x in id_list
+        if pd.notna(x) and str(x).strip()
+    ]
 
     for i in range(0, len(clean_ids), chunk_size):
         batch = clean_ids[i : i + chunk_size]
-        formatted_ids = ",".join(batch)
+        # Quote IDs safely for PostgREST in.() filter
+        formatted_ids = ",".join(f'"{ str(pid).replace(chr(34), "") }"' for pid in batch)
         endpoint = f"{url.rstrip('/')}/rest/v1/{tableName}?{id_col}=in.({formatted_ids})&select=*"
-        res = session.get(endpoint, headers=headers, timeout=20)
+        res = session.get(endpoint, headers=headers, timeout=25)
         res.raise_for_status()
         data = res.json()
         if data:
@@ -377,10 +401,19 @@ def fetch_supabase_by_ids(
 
 
 def fetch_all_patient_ids_only(
-    tableName: str, url: str, key: str, access_token: str = None, id_col: str = "PatientID", page_size: int = 5000
+    tableName: str,
+    url: str,
+    key: str,
+    access_token: str = None,
+    id_col: str = "PatientID",
+    page_size: int = 1000,  # MUST be <= 1000 (PostgREST default max-rows limit)
 ) -> set:
-    """Lightweight fetch of ONLY the PatientID column (~98% less RAM than SELECT *)."""
-    endpoint = f"{url.rstrip('/')}/rest/v1/{tableName}?select={id_col}"
+    """
+    Lightweight, deterministic fetch of ONLY the PatientID column.
+    Uses order={id_col}.asc and page_size=1000 so PostgREST never truncates or skips pages.
+    """
+    # CRITICAL: order={id_col}.asc guarantees stable pagination across all 48+ requests
+    endpoint = f"{url.rstrip('/')}/rest/v1/{tableName}?select={id_col}&order={id_col}.asc"
     auth_token = access_token if access_token else key.strip()
     headers = {
         "apikey": key.strip(),
@@ -393,21 +426,146 @@ def fetch_all_patient_ids_only(
 
     while True:
         page_headers = headers.copy()
+        page_headers["Range-Unit"] = "items"
         page_headers["Range"] = f"{start_index}-{start_index + page_size - 1}"
-        res = session.get(endpoint, headers=page_headers, timeout=15)
+        res = session.get(endpoint, headers=page_headers, timeout=20)
         res.raise_for_status()
         chunk = res.json()
         if not chunk:
             break
+
         for row in chunk:
             val = row.get(id_col)
-            if val is not None and str(val).strip():
-                all_ids.add(str(val).strip())
+            if val is not None:
+                s = str(val).strip().replace("\r", "").replace("\xa0", "")
+                if s.endswith(".0"):
+                    s = s[:-2]
+                if s and s.lower() not in MISSING_STRINGS:
+                    all_ids.add(s)
+
         if len(chunk) < page_size:
             break
-        start_index += page_size
+        start_index += len(chunk)
 
     return all_ids
+
+# def compare_data_fast(dfExcel: pd.DataFrame, dfSupabase: pd.DataFrame, id_col: str = "PatientID") -> pd.DataFrame:
+#     records = []
+#     dfE = dfExcel.copy()
+#     dfS = dfSupabase.copy()
+
+#     if id_col not in dfE.columns or id_col not in dfS.columns:
+#         return pd.DataFrame(columns=["PatientID", "ColumnName", "Value_Excel", "Value_Supabase"])
+
+#     dfE[id_col] = dfE[id_col].astype(str).str.strip()
+#     dfS[id_col] = dfS[id_col].astype(str).str.strip()
+
+#     for col in DATE_COLUMNS:
+#         if col in dfE.columns:
+#             dfE[col] = pd.to_datetime(dfE[col], errors="coerce").dt.strftime("%Y-%m-%d")
+#         if col in dfS.columns:
+#             dfS[col] = pd.to_datetime(dfS[col], errors="coerce").dt.strftime("%Y-%m-%d")
+
+#     ids_E = set(dfE[id_col].dropna().unique()) - {"", "nan", "None", "<NA>"}
+#     ids_S = set(dfS[id_col].dropna().unique()) - {"", "nan", "None", "<NA>"}
+
+#     for pid in sorted(ids_E - ids_S):
+#         records.append([pid, "_Not in Supabase", pid, None])
+#     for pid in sorted(ids_S - ids_E):
+#         records.append([pid, "_Not in Excel", None, pid])
+
+#     common_cols = [c for c in dfE.columns if c in dfS.columns and c not in {id_col, "updated_at"}]
+
+#     # Deduplicate on ID before merging for cell comparison
+#     dfE_unique = dfE.drop_duplicates(subset=[id_col]).set_index(id_col)
+#     dfS_unique = dfS.drop_duplicates(subset=[id_col]).set_index(id_col)
+#     common_ids = sorted(list(ids_E & ids_S))
+
+#     if common_ids and common_cols:
+#         subE = dfE_unique.loc[common_ids, common_cols]
+#         subS = dfS_unique.loc[common_ids, common_cols]
+
+#         for col in common_cols:
+#             normE = _vectorized_normalize_series(subE[col])
+#             normS = _vectorized_normalize_series(subS[col])
+#             diff_mask = (normE != normS) & ~(normE.isna() & normS.isna())
+#             if diff_mask.any():
+#                 diff_ids = diff_mask[diff_mask].index
+#                 for pid in diff_ids:
+#                     records.append([pid, col, subE.at[pid, col], subS.at[pid, col]])
+
+#     return pd.DataFrame(records, columns=["PatientID", "ColumnName", "Value_Excel", "Value_Supabase"])
+
+# # Add to the bottom of functions.py
+
+# def fetch_supabase_by_ids(
+#     tableName: str,
+#     id_list: list,
+#     url: str,
+#     key: str,
+#     access_token: str = None,
+#     id_col: str = "PatientID",
+#     chunk_size: int = 300,
+# ) -> pd.DataFrame:
+#     """Fetches only the rows matching the PatientIDs in the uploaded Excel file."""
+#     if not id_list:
+#         return pd.DataFrame()
+
+#     auth_token = access_token if access_token else key.strip()
+#     headers = {
+#         "apikey": key.strip(),
+#         "Authorization": f"Bearer {auth_token}",
+#         "Content-Type": "application/json",
+#     }
+#     session = get_working_session(url, headers)
+#     all_rows = []
+#     clean_ids = [str(x).strip() for x in id_list if pd.notna(x) and str(x).strip()]
+
+#     for i in range(0, len(clean_ids), chunk_size):
+#         batch = clean_ids[i : i + chunk_size]
+#         formatted_ids = ",".join(batch)
+#         endpoint = f"{url.rstrip('/')}/rest/v1/{tableName}?{id_col}=in.({formatted_ids})&select=*"
+#         res = session.get(endpoint, headers=headers, timeout=20)
+#         res.raise_for_status()
+#         data = res.json()
+#         if data:
+#             all_rows.extend(data)
+
+#     return pd.DataFrame(all_rows)
+
+
+# def fetch_all_patient_ids_only(
+#     tableName: str, url: str, key: str, access_token: str = None, id_col: str = "PatientID", page_size: int = 5000
+# ) -> set:
+#     """Lightweight fetch of ONLY the PatientID column (~98% less RAM than SELECT *)."""
+#     endpoint = f"{url.rstrip('/')}/rest/v1/{tableName}?select={id_col}"
+#     auth_token = access_token if access_token else key.strip()
+#     headers = {
+#         "apikey": key.strip(),
+#         "Authorization": f"Bearer {auth_token}",
+#         "Content-Type": "application/json",
+#     }
+#     session = get_working_session(url, headers)
+#     all_ids = set()
+#     start_index = 0
+
+#     while True:
+#         page_headers = headers.copy()
+#         page_headers["Range"] = f"{start_index}-{start_index + page_size - 1}"
+#         res = session.get(endpoint, headers=page_headers, timeout=15)
+#         res.raise_for_status()
+#         chunk = res.json()
+#         if not chunk:
+#             break
+#         for row in chunk:
+#             val = row.get(id_col)
+#             if val is not None and str(val).strip():
+#                 all_ids.add(str(val).strip())
+#         if len(chunk) < page_size:
+#             break
+#         start_index += page_size
+
+#     return all_ids
 
 
 # def _create_censorship_resistant_session(host_domain: str, alt_ip: str) -> requests.Session:

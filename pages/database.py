@@ -828,24 +828,65 @@ def render_bulk_upload_tab():
         token = getattr(st.session_state.session, "access_token", None)
 
         if st.button("⚖️ Run Smart Memory-Optimized Reconciliation", use_container_width=True):
-            with st.spinner("Fetching matching records and ID index from Supabase..."):
-                excel_pids = df_clean["PatientID"].dropna().astype(str).str.strip().unique().tolist()
-                # 1. Fetch full rows ONLY for IDs present in the Excel file
-                df_supa_matched = fetch_supabase_by_ids(TABLE_NAME, excel_pids, SUPABASE_URL, SUPABASE_KEY, access_token=token)
-                # 2. Fetch lightweight ID set for '_Not in Excel' detection
-                all_supa_ids = fetch_all_patient_ids_only(TABLE_NAME, SUPABASE_URL, SUPABASE_KEY, access_token=token)
+                    with st.spinner("Fetching matching records and ID index from Supabase..."):
+                        # Normalize PatientIDs in df_clean first
+                        df_clean["PatientID"] = (
+                            df_clean["PatientID"]
+                            .astype(str)
+                            .str.replace("\r", "", regex=False)
+                            .str.replace("\xa0", "", regex=False)
+                            .str.strip()
+                            .str.replace(r"\.0$", "", regex=True)
+                        )
+                        excel_pids = [
+                            pid for pid in df_clean["PatientID"].dropna().unique().tolist()
+                            if pid and pid.lower() not in {"", "nan", "none", "<na>", "null", "nat"}
+                        ]
 
-                diff_log = compare_data_fast(df_clean, df_supa_matched, id_col="PatientID")
-                # Append any orphaned IDs in Supabase that were not in the Excel upload
-                missing_in_xl = sorted(list(all_supa_ids - set(excel_pids)))
-                if missing_in_xl:
-                    orphan_df = pd.DataFrame(
-                        [[pid, "_Not in Excel", None, pid] for pid in missing_in_xl],
-                        columns=["PatientID", "ColumnName", "Value_Excel", "Value_Supabase"],
-                    )
-                    diff_log = pd.concat([diff_log, orphan_df], ignore_index=True)
+                        # 1. Fetch full rows ONLY for IDs present in the Excel file
+                        df_supa_matched = fetch_supabase_by_ids(
+                            TABLE_NAME, excel_pids, SUPABASE_URL, SUPABASE_KEY, access_token=token
+                        )
+                        # 2. Fetch lightweight ID set for '_Not in Excel' detection (now pages by 1,000 with ORDER BY)
+                        all_supa_ids = fetch_all_patient_ids_only(
+                            TABLE_NAME, SUPABASE_URL, SUPABASE_KEY, access_token=token
+                        )
 
-                st.session_state["reconcile_log"] = diff_log
+                        diff_log = compare_data_fast(df_clean, df_supa_matched, id_col="PatientID")
+
+                        # Append any orphaned IDs in Supabase that were not in the Excel upload
+                        already_logged_orphans = set(
+                            diff_log.loc[diff_log["ColumnName"] == "_Not in Excel", "PatientID"].dropna().astype(str)
+                        )
+                        missing_in_xl = sorted(list((all_supa_ids - set(excel_pids)) - already_logged_orphans))
+                        if missing_in_xl:
+                            orphan_df = pd.DataFrame(
+                                [[pid, "_Not in Excel", None, pid] for pid in missing_in_xl],
+                                columns=["PatientID", "ColumnName", "Value_Excel", "Value_Supabase"],
+                            )
+                            diff_log = pd.concat([diff_log, orphan_df], ignore_index=True)
+
+                        st.session_state["reconcile_log"] = diff_log
+
+        # if st.button("⚖️ Run Smart Memory-Optimized Reconciliation", use_container_width=True):
+        #     with st.spinner("Fetching matching records and ID index from Supabase..."):
+        #         excel_pids = df_clean["PatientID"].dropna().astype(str).str.strip().unique().tolist()
+        #         # 1. Fetch full rows ONLY for IDs present in the Excel file
+        #         df_supa_matched = fetch_supabase_by_ids(TABLE_NAME, excel_pids, SUPABASE_URL, SUPABASE_KEY, access_token=token)
+        #         # 2. Fetch lightweight ID set for '_Not in Excel' detection
+        #         all_supa_ids = fetch_all_patient_ids_only(TABLE_NAME, SUPABASE_URL, SUPABASE_KEY, access_token=token)
+
+        #         diff_log = compare_data_fast(df_clean, df_supa_matched, id_col="PatientID")
+        #         # Append any orphaned IDs in Supabase that were not in the Excel upload
+        #         missing_in_xl = sorted(list(all_supa_ids - set(excel_pids)))
+        #         if missing_in_xl:
+        #             orphan_df = pd.DataFrame(
+        #                 [[pid, "_Not in Excel", None, pid] for pid in missing_in_xl],
+        #                 columns=["PatientID", "ColumnName", "Value_Excel", "Value_Supabase"],
+        #             )
+        #             diff_log = pd.concat([diff_log, orphan_df], ignore_index=True)
+
+        #         st.session_state["reconcile_log"] = diff_log
 
         if "reconcile_log" in st.session_state:
             log_df = st.session_state["reconcile_log"]
