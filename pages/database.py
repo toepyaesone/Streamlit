@@ -897,24 +897,96 @@ def render_bulk_upload_tab():
                         except Exception as e:
                             st.error(f"❌ Batch Upsert Failed: {e}")
 
-                with act_col2:
-                    if not_in_excel_ids:
-                        if st.button(
-                            f"🗑️ Delete {len(not_in_excel_ids)} Orphaned Row(s) (`_Not in Excel`)",
-                            disabled=not can_delete,
-                            use_container_width=True,
-                        ):
-                            sync_client = get_user_client()
-                            try:
-                                for i in range(0, len(not_in_excel_ids), 200):
-                                    batch_ids = not_in_excel_ids[i : i + 200]
-                                    sync_client.table(TABLE_NAME).delete().in_("PatientID", batch_ids).execute()
-                                get_all_filter_options.clear()
-                                st.success(f"✅ Deleted {len(not_in_excel_ids)} record(s) from `{TABLE_NAME}`.")
-                            except Exception as e:
-                                st.error(f"❌ Delete Failed: {e}")
-                    else:
-                        st.info("No orphaned records (`_Not in Excel`) to delete.")
+                # ----------------------------------------------------------------
+                # DELETE Orphaned Records (PatientIDs in Supabase but NOT in Excel)
+                # ----------------------------------------------------------------
+                st.divider()
+                st.subheader("🗑️ Delete Records Not Present in the Uploaded Excel")
+
+                if not not_in_excel_ids:
+                    st.info(
+                        "✅ No orphaned records found — every PatientID in Supabase "
+                        "also exists in the uploaded Excel file."
+                    )
+                else:
+                    st.warning(
+                        f"**{len(not_in_excel_ids):,} PatientID(s)** exist in Supabase "
+                        f"but were **not found** in the uploaded Excel file (`excel_pids`). "
+                        f"Review and optionally delete them below."
+                    )
+
+                    # --- Preview table ---
+                    with st.expander(
+                        f"🔍 Preview {len(not_in_excel_ids):,} Orphaned PatientID(s) (Not in Excel)",
+                        expanded=True,
+                    ):
+                        preview_df = pd.DataFrame(
+                            {"PatientID (Orphaned — Not in Excel)": not_in_excel_ids}
+                        )
+                        st.dataframe(preview_df, use_container_width=True, height=min(300, len(not_in_excel_ids) * 36 + 40))
+                        csv_orphans = preview_df.to_csv(index=False).encode("utf-8")
+                        st.download_button(
+                            "📄 Download Orphaned ID List (CSV)",
+                            data=csv_orphans,
+                            file_name="orphaned_patient_ids.csv",
+                            mime="text/csv",
+                        )
+
+                    # --- Selective multiselect ---
+                    st.markdown("**Select which PatientIDs to delete** (defaults to all orphaned IDs):")
+                    ids_to_delete = st.multiselect(
+                        "PatientIDs to Delete",
+                        options=not_in_excel_ids,
+                        default=not_in_excel_ids,
+                        label_visibility="collapsed",
+                        key="delete_orphan_select",
+                    )
+
+                    if ids_to_delete:
+                        # --- Confirmation checkbox (required before delete button activates) ---
+                        confirmed = st.checkbox(
+                            f"☑️ I confirm I want to **permanently delete {len(ids_to_delete):,} record(s)** "
+                            f"from `{TABLE_NAME}`. This action **cannot be undone**.",
+                            key="delete_orphan_confirm",
+                        )
+
+                        del_col1, del_col2 = st.columns([2, 1])
+                        with del_col1:
+                            if st.button(
+                                f"🗑️ Permanently Delete {len(ids_to_delete):,} Selected Record(s)",
+                                type="primary",
+                                disabled=(not can_delete or not confirmed),
+                                use_container_width=True,
+                                key="delete_orphan_btn",
+                            ):
+                                sync_client = get_user_client()
+                                batch_size = 200
+                                total_del_batches = max(1, (len(ids_to_delete) + batch_size - 1) // batch_size)
+                                del_prog = st.progress(0, text="Starting delete operation...")
+
+                                try:
+                                    for idx, i in enumerate(range(0, len(ids_to_delete), batch_size)):
+                                        batch = ids_to_delete[i : i + batch_size]
+                                        sync_client.table(TABLE_NAME).delete().in_("PatientID", batch).execute()
+                                        del_prog.progress(
+                                            (idx + 1) / total_del_batches,
+                                            text=f"Deleted batch {idx + 1}/{total_del_batches}...",
+                                        )
+
+                                    get_all_filter_options.clear()
+                                    # Clear the reconcile log so stale results don't persist
+                                    st.session_state.pop("reconcile_log", None)
+                                    st.success(
+                                        f"✅ Successfully deleted **{len(ids_to_delete):,}** "
+                                        f"record(s) from `{TABLE_NAME}`."
+                                    )
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Delete Failed: {e}")
+
+                        with del_col2:
+                            if not can_delete:
+                                st.warning("🔒 Admin permission required to delete records.")
 
 
 # ============================================================
