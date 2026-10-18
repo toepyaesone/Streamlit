@@ -27,6 +27,8 @@ from functions import (
     plotly_target_achievement_allcharts,
     plotly_funnel,
     plotly_table_count_percent,
+    generate_table_ds_tb_regimen,
+    generate_table_tb_diagnosis,
 )
 
 # -----------------------------------------------------------------------------
@@ -648,6 +650,64 @@ elif section == "Enrollment":
             optional_include_total=True,
         )
     ))
+
+
+    # ==========================================
+    # CHART 1: All Registered DS TB case
+    # ==========================================
+    st.subheader("All Registered DS TB case for selected month")
+
+    col1_opt1, col1_opt2 = st.columns(2)
+    with col1_opt1:
+        c1_grand_total = st.checkbox("Show Grand Total", value=True, key="c1_total")
+    with col1_opt2:
+        c1_exclude_blank = st.checkbox("Exclude Blank", value=True, key="c1_blank")
+
+    chart1_df = generate_table_ds_tb_regimen(
+        df=filtered_df, 
+        show_grand_total=c1_grand_total, 
+        exclude_blank=c1_exclude_blank
+    )
+
+    if not chart1_df.empty:
+        st.dataframe(chart1_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No data available for Chart 1 with the current filters.")
+
+    st.markdown("---")
+
+    # ==========================================
+    # CHART 2: TB Diagnosis for selected month
+    # ==========================================
+    st.subheader("TB Diagnosis for selected month")
+
+    col2_opt1, col2_opt2 = st.columns(2)
+    with col2_opt1:
+        c2_grand_total = st.checkbox("Show Grand Total", value=True, key="c2_total")
+    with col2_opt2:
+        c2_exclude_blank = st.checkbox("Exclude Blank", value=True, key="c2_blank")
+
+    chart2_df = generate_table_tb_diagnosis(
+        df=filtered_df, 
+        show_grand_total=c2_grand_total, 
+        exclude_blank=c2_exclude_blank
+    )
+
+    if not chart2_df.empty:
+        # Format the percentage column cleanly for display
+        st.dataframe(
+            chart2_df,
+            column_config={
+                "Gene Xpert Tested (%)": st.column_config.NumberColumn(
+                    "Gene Xpert Tested (%)",
+                    format="%.1f%%"
+                )
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("No data available for Chart 2 with the current filters.")
 
 st.divider()
 st.caption("YgnTBPro • Streamlit Community Cloud • Data source: Supabase")

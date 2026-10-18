@@ -3431,3 +3431,95 @@ def plotly_table_pivot(dataframe: pd.DataFrame,row: list,count_unique: str,count
   )
 
   return fig
+
+def generate_table_ds_tb_regimen(df, show_grand_total=True, exclude_blank=True):
+    if df.empty:
+        return pd.DataFrame()
+
+    # Apply base filters
+    filtered_df = df[
+        (df["Treatmentreferral"] == "Registered") & 
+        (df["TypeofTBTreatment"] == "DS-TB")
+    ].copy()
+
+    # Optional: Exclude blanks/nulls in Row and Column fields
+    if exclude_blank:
+        filtered_df = filtered_df.dropna(subset=["ReportingTsp11", "TreatmentRegimen"])
+        filtered_df = filtered_df[
+            (filtered_df["ReportingTsp11"].astype(str).str.strip() != "") & 
+            (filtered_df["TreatmentRegimen"].astype(str).str.strip() != "")
+        ]
+    else:
+        filtered_df["ReportingTsp11"] = filtered_df["ReportingTsp11"].fillna("Blank").replace("", "Blank")
+        filtered_df["TreatmentRegimen"] = filtered_df["TreatmentRegimen"].fillna("Blank").replace("", "Blank")
+
+    if filtered_df.empty:
+        return pd.DataFrame()
+
+    # Create Pivot Table
+    pivot_df = pd.pivot_table(
+        filtered_df,
+        index="ReportingTsp11",
+        columns="TreatmentRegimen",
+        aggfunc="size",
+        fill_value=0,
+        margins=show_grand_total,
+        margins_name="Grand Total"
+    )
+
+    return pivot_df.reset_index()
+
+
+def generate_table_tb_diagnosis(df, show_grand_total=True, exclude_blank=True):
+    if df.empty:
+        return pd.DataFrame()
+
+    # Apply base filters
+    filtered_df = df[
+        (df["Treatmentreferral"] == "Registered") & 
+        (df["TypeofTBTreatment"] == "DS-TB")
+    ].copy()
+
+    if exclude_blank:
+        filtered_df = filtered_df.dropna(subset=["ReportingTsp11"])
+        filtered_df = filtered_df[filtered_df["ReportingTsp11"].astype(str).str.strip() != ""]
+    else:
+        filtered_df["ReportingTsp11"] = filtered_df["ReportingTsp11"].fillna("Blank").replace("", "Blank")
+
+    if filtered_df.empty:
+        return pd.DataFrame()
+
+    # Define condition masks for the custom columns
+    tested_values = ["N", "I", "T", "RR", "TI", "TT"]
+    
+    filtered_df["is_ds_tb"] = (filtered_df["TypeofTBTreatment"] == "DS-TB").astype(int)
+    filtered_df["is_xpert_tested"] = filtered_df["GeneXpertresult"].isin(tested_values).astype(int)
+    filtered_df["is_xpert_rr"] = (filtered_df["GeneXpertresult"] == "RR").astype(int)
+
+    # Group by ReportingTsp11
+    summary_df = filtered_df.groupby("ReportingTsp11", as_index=False).agg(
+        **{
+            "Registered DS-TB Cases": ("is_ds_tb", "sum"),
+            "Gene Xpert Tested": ("is_xpert_tested", "sum"),
+            "Gene Xpert RR": ("is_xpert_rr", "sum"),
+        }
+    )
+
+    # Optional: Add Grand Total row before calculating percentage
+    if show_grand_total:
+        totals = pd.DataFrame({
+            "ReportingTsp11": ["Grand Total"],
+            "Registered DS-TB Cases": [summary_df["Registered DS-TB Cases"].sum()],
+            "Gene Xpert Tested": [summary_df["Gene Xpert Tested"].sum()],
+            "Gene Xpert RR": [summary_df["Gene Xpert RR"].sum()],
+        })
+        summary_df = pd.concat([summary_df, totals], ignore_index=True)
+
+    # Calculate Percentage: (Gene Xpert Tested / Registered DS-TB Cases) * 100
+    summary_df["Gene Xpert Tested (%)"] = np.where(
+        summary_df["Registered DS-TB Cases"] > 0,
+        (summary_df["Gene Xpert Tested"] / summary_df["Registered DS-TB Cases"] * 100).round(1),
+        0.0
+    )
+
+    return summary_df
