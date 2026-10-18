@@ -870,7 +870,7 @@ def render_custom_pivot_table_section(df):
                 "Rows (Hierarchy)",
                 options=all_cols,
                 default=default_row,
-                key="piv_rows"
+                key="piv_rows_tbl"
             )
         with p_col2:
             avail_cols = [c for c in all_cols if c not in selected_rows]
@@ -878,14 +878,14 @@ def render_custom_pivot_table_section(df):
                 "Columns",
                 options=avail_cols,
                 default=[c for c in default_col if c in avail_cols],
-                key="piv_cols"
+                key="piv_cols_tbl"
             )
         with p_col3:
             agg_method = st.selectbox(
                 "Calculation Method",
                 options=["Count", "Sum", "Count Unique", "Average"],
                 index=0,
-                key="piv_agg"
+                key="piv_agg_tbl"
             )
         with p_col4:
             val_options = ["(Record Count)"] + all_cols if agg_method == "Count" else all_cols
@@ -893,7 +893,7 @@ def render_custom_pivot_table_section(df):
                 "Value Field",
                 options=val_options,
                 index=0,
-                key="piv_val"
+                key="piv_val_tbl"
             )
 
         # Row 2: Dynamic Filters
@@ -901,7 +901,7 @@ def render_custom_pivot_table_section(df):
             "Filter Fields (Optional)",
             options=all_cols,
             default=[c for c in ["Treatmentreferral", "TypeofTBTreatment"] if c in all_cols],
-            key="piv_filter_cols"
+            key="piv_filter_cols_tbl"
         )
         active_filters = {}
         if filter_cols:
@@ -915,7 +915,7 @@ def render_custom_pivot_table_section(df):
                         f"Filter: {f_col}",
                         options=unique_vals,
                         default=unique_vals,
-                        key=f"piv_fval_{f_col}"
+                        key=f"piv_fval_tbl_{f_col}"
                     )
                     active_filters[f_col] = chosen_vals
 
@@ -928,14 +928,14 @@ def render_custom_pivot_table_section(df):
                 "Report Layout",
                 options=["Tabular", "Compact"],
                 horizontal=True,
-                key="piv_layout"
+                key="piv_layout_tbl"
             )
         with opt2:
-            show_subtotals = st.checkbox("Show Subtotals", value=True, key="piv_sub")
+            show_subtotals = st.checkbox("Show Subtotals", value=True, key="piv_sub_tbl")
         with opt3:
-            show_grand_total = st.checkbox("Show Grand Total", value=True, key="piv_gt")
+            show_grand_total = st.checkbox("Show Grand Total", value=True, key="piv_gt_tbl")
         with opt4:
-            exclude_blank = st.checkbox("Exclude Blanks", value=True, key="piv_blank")
+            exclude_blank = st.checkbox("Exclude Blanks", value=True, key="piv_blank_tbl")
 
     if not selected_rows:
         st.warning("Please select at least one field in **Rows (Hierarchy)** to generate the pivot table.")
