@@ -250,9 +250,7 @@ max_date = df_slicer["Date"].max().date()
 # -----------------------------------------------------------------------------
 # Sidebar filters  — generation-counter pattern avoids session_state conflicts
 # -----------------------------------------------------------------------------
-# Each time the user clicks "Clear all filters", filter_gen is incremented.
-# All widget keys embed _gen, so Streamlit discards the old widgets and creates
-# fresh ones with their default values (empty lists / full date range).
+
 if "filter_gen" not in st.session_state:
     st.session_state["filter_gen"] = 0
 
@@ -393,7 +391,7 @@ st.caption(
 # Render sections
 section = st.radio(
     "Dashboard section",
-    ["📊 Overview", "🫁 Tuberculosis", "🏥 Primary Healthcare", "🔎 Analysis"],
+    ["📊 Overview", "🫁 Tuberculosis", "🏥 Primary Healthcare", "🔎 Analysis","Enrollment"],
     horizontal=True,
 )
 
@@ -588,7 +586,7 @@ elif section == "🏥 Primary Healthcare":
         )
     ))
 
-else:
+elif section == "🔎 Analysis":
     charts = plotly_target_achievement_allcharts(
         dataframe=progress,
         date_config={"ReportingDate": "Reporting Period"},
@@ -637,6 +635,15 @@ else:
         plotly_table_count_percent(
             df=filtered_df,
             column_list=["TypeofPatient1", "Reasonforexamination", "TypeofDisease", "Transferin", "Placeforreferral"],
+            optional_exclude_blank=True,
+            optional_include_total=True,
+        )
+    ))
+elif section == "Enrollment":
+    safe_section("Enrollment Data Overview", lambda: safe_plotly(
+        plotly_table_count_percent(
+            df=filtered_df,
+            column_list=["Treatmentreferral", "TreatmentRegimen", "TypeofTBTreatment", "Placeforreferral"],
             optional_exclude_blank=True,
             optional_include_total=True,
         )
