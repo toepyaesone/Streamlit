@@ -680,6 +680,18 @@ elif section == "Enrollment":
         )
     ))
 
+    # safe_section("All Registered DS TB case for selected month", lambda: safe_table(
+    #     dataframe_table_builder(
+    #         df=filtered_df,
+    #         row=["ReportingTsp11"],
+    #         column="TreatmentRegimen",
+    #         filters={"Treatmentreferral": "Registered", "TypeofTBTreatment": "DS-TB"},
+    #         optional_include_total=True,
+    #         optional_exclude_blank=True,
+    #     )
+    # ))
+
+
     safe_section("TB Diagnosis for selected month", lambda: safe_plotly(
         plotly_table_builder(
             df=filtered_df,
@@ -697,6 +709,24 @@ elif section == "Enrollment":
             optional_exclude_blank=True,
         )
     ))
+
+    # safe_section("TB Diagnosis for selected month", lambda: safe_table(
+    #     dataframe_table_builder(
+    #         df=filtered_df,
+    #         row=["ReportingTsp11"],
+    #         column={
+    #             "Registered DS-TB Cases": {"TypeofTBTreatment": ["DS-TB"]},
+    #             "Gene Xpert Tested": {"GeneXpertresult": ["N", "I", "T", "RR", "TI", "TT"]},
+    #             "Gene Xpert RR": {"GeneXpertresult": ["RR"]},
+    #         },
+    #         filters={"Treatmentreferral": "Registered", "TypeofTBTreatment": "DS-TB"},
+    #         pct_numerator="Gene Xpert Tested",
+    #         pct_denominator="Registered DS-TB Cases",
+    #         pct_col_name="Gene Xpert Tested (%)",
+    #         optional_include_total=True,
+    #         optional_exclude_blank=True,
+    #     )
+    # ))
 
 def render_custom_pivot_section(df):
     if df is None or df.empty:
@@ -812,42 +842,6 @@ def render_custom_pivot_section(df):
 
 # Invoke inside your dashboard flow:
 safe_section("Custom Interactive Pivot Table", lambda: render_custom_pivot_section(filtered_df))
-
-
-# ==============================================================================
-# CHART 1: All Registered DS TB case for selected month (Native Table)
-# ==============================================================================
-safe_section("All Registered DS TB case for selected month", lambda: safe_table(
-    dataframe_table_builder(
-        df=filtered_df,
-        row=["ReportingTsp11"],
-        column="TreatmentRegimen",
-        filters={"Treatmentreferral": "Registered", "TypeofTBTreatment": "DS-TB"},
-        optional_include_total=True,
-        optional_exclude_blank=True,
-    )
-))
-
-# ==============================================================================
-# CHART 2: TB Diagnosis for selected month (Native Table)
-# ==============================================================================
-safe_section("TB Diagnosis for selected month", lambda: safe_table(
-    dataframe_table_builder(
-        df=filtered_df,
-        row=["ReportingTsp11"],
-        column={
-            "Registered DS-TB Cases": {"TypeofTBTreatment": ["DS-TB"]},
-            "Gene Xpert Tested": {"GeneXpertresult": ["N", "I", "T", "RR", "TI", "TT"]},
-            "Gene Xpert RR": {"GeneXpertresult": ["RR"]},
-        },
-        filters={"Treatmentreferral": "Registered", "TypeofTBTreatment": "DS-TB"},
-        pct_numerator="Gene Xpert Tested",
-        pct_denominator="Registered DS-TB Cases",
-        pct_col_name="Gene Xpert Tested (%)",
-        optional_include_total=True,
-        optional_exclude_blank=True,
-    )
-))
 
 
 # ==============================================================================
