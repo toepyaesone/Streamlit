@@ -3889,59 +3889,6 @@ def plotly_excel_pivot_builder(
     fig.update_layout(**layout_kwargs)
     return fig
 
-def _apply_excel_table_styling(
-    formatted_df: pd.DataFrame,
-    row_types: list,
-    row_headers: list,
-    val_cols: list
-):
-    """
-    Helper to apply Excel-like banded rows, subtotal/grand-total shading, 
-    and left/right text alignment for st.dataframe / st.table.
-    """
-    def style_rows(row):
-        idx = row.name
-        r_type = row_types[idx] if idx < len(row_types) else "data"
-
-        if r_type == "grand_total":
-            bg = "#CBD5E1"  # Darker slate highlight for Grand Total
-            weight = "bold"
-        elif r_type == "subtotal":
-            bg = "#E2E8F0"  # Medium slate highlight for Subtotal
-            weight = "bold"
-        elif r_type == "group_header":
-            bg = "#F1F5F9"  # Soft tint for Compact group headers
-            weight = "bold"
-        else:
-            bg = "#FFFFFF" if idx % 2 == 0 else "#F8FAFC"
-            weight = "normal"
-
-        styles = []
-        for col in row.index:
-            align = "left" if col in row_headers else "right"
-            styles.append(
-                f"background-color: {bg}; color: #0F172A; font-weight: {weight}; text-align: {align};"
-            )
-        return styles
-
-    styler = (
-        formatted_df.style
-        .apply(style_rows, axis=1)
-        .set_table_styles([
-            {
-                "selector": "th",
-                "props": [
-                    ("background-color", "#1E293B"),
-                    ("color", "white"),
-                    ("font-weight", "bold"),
-                    ("text-align", "center"),
-                ],
-            }
-        ])
-    )
-    return styler
-
-
 def dataframe_table_builder(
     df: pd.DataFrame,
     row: list,
@@ -4073,6 +4020,290 @@ def dataframe_table_builder(
 
     return _apply_excel_table_styling(formatted_df, row_types, list(row), val_cols)
 
+# def _apply_excel_table_styling(
+#     formatted_df: pd.DataFrame,
+#     row_types: list,
+#     row_headers: list,
+#     val_cols: list
+# ):
+#     """
+#     Helper to apply Excel-like banded rows, subtotal/grand-total shading, 
+#     and left/right text alignment for st.dataframe / st.table.
+#     """
+#     def style_rows(row):
+#         idx = row.name
+#         r_type = row_types[idx] if idx < len(row_types) else "data"
+
+#         if r_type == "grand_total":
+#             bg = "#CBD5E1"  # Darker slate highlight for Grand Total
+#             weight = "bold"
+#         elif r_type == "subtotal":
+#             bg = "#E2E8F0"  # Medium slate highlight for Subtotal
+#             weight = "bold"
+#         elif r_type == "group_header":
+#             bg = "#F1F5F9"  # Soft tint for Compact group headers
+#             weight = "bold"
+#         else:
+#             bg = "#FFFFFF" if idx % 2 == 0 else "#F8FAFC"
+#             weight = "normal"
+
+#         styles = []
+#         for col in row.index:
+#             align = "left" if col in row_headers else "right"
+#             styles.append(
+#                 f"background-color: {bg}; color: #0F172A; font-weight: {weight}; text-align: {align};"
+#             )
+#         return styles
+
+#     styler = (
+#         formatted_df.style
+#         .apply(style_rows, axis=1)
+#         .set_table_styles([
+#             {
+#                 "selector": "th",
+#                 "props": [
+#                     ("background-color", "#1E293B"),
+#                     ("color", "white"),
+#                     ("font-weight", "bold"),
+#                     ("text-align", "center"),
+#                 ],
+#             }
+#         ])
+#     )
+#     return styler
+
+def _apply_excel_table_styling(
+    formatted_df: pd.DataFrame,
+    row_types: list,
+    row_headers: list,
+    val_cols: list
+):
+    def style_rows(row):
+        idx = row.name
+        r_type = row_types[idx] if idx < len(row_types) else "data"
+
+        if r_type == "grand_total":
+            bg = "#CBD5E1"  # Darker slate highlight for Grand Total
+            weight = "bold"
+        elif r_type == "subtotal":
+            bg = "#E2E8F0"  # Medium slate highlight for Subtotal
+            weight = "bold"
+        elif r_type == "group_header":
+            bg = "#F1F5F9"  # Soft tint for Compact group headers
+            weight = "bold"
+        else:
+            bg = "#FFFFFF" if idx % 2 == 0 else "#F8FAFC"
+            weight = "normal"
+
+        styles = []
+        for col in row.index:
+            is_row_hdr = col in row_headers
+            # Highlight column-level subtotal cells slightly
+            is_col_sub = (isinstance(col, tuple) and "Subtotal" in str(col[-1])) or ("Subtotal" in str(col))
+            cell_bg = "#E2E8F0" if (is_col_sub and r_type == "data") else bg
+            cell_weight = "bold" if is_col_sub else weight
+            align = "left" if is_row_hdr else "right"
+            styles.append(
+                f"background-color: {cell_bg}; color: #0F172A; font-weight: {cell_weight}; text-align: {align};"
+            )
+        return styles
+
+    styler = (
+        formatted_df.style
+        .apply(style_rows, axis=1)
+        .set_table_styles([
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", "#1E293B"),
+                    ("color", "white"),
+                    ("font-weight", "bold"),
+                    ("text-align", "center"),
+                    ("border", "1px solid #334155"),
+                ],
+            }
+        ])
+    )
+    return styler
+
+
+# def dataframe_excel_pivot_builder(
+#     df: pd.DataFrame,
+#     rows: list,
+#     columns: list = None,
+#     values: str = None,
+#     agg_func: str = "count",          # Options: "count", "sum", "nunique", "mean"
+#     filters: dict = None,             # Format: {"ColumnName": ["Val1", "Val2"]}
+#     show_subtotals: bool = True,
+#     show_grand_total: bool = True,
+#     exclude_blank: bool = True,
+#     layout_style: str = "Tabular",    # Options: "Tabular" or "Compact"
+# ):
+
+#     if df is None or df.empty or not rows:
+#         return None
+
+#     working_df = df.copy()
+#     columns = columns or []
+
+#     # 1. Clean string grouping & filter columns
+#     cols_to_clean = list(rows) + list(columns) + (list(filters.keys()) if filters else [])
+#     for col in set(cols_to_clean):
+#         if col in working_df.columns:
+#             working_df[col] = (
+#                 working_df[col]
+#                 .fillna("")
+#                 .astype(str)
+#                 .str.strip()
+#                 .replace(["nan", "None", "NAT", "NaT", "<NA>"], "")
+#             )
+
+#     # Apply interactive filters
+#     if filters:
+#         for f_col, f_vals in filters.items():
+#             if f_col in working_df.columns and f_vals:
+#                 if isinstance(f_vals, list):
+#                     working_df = working_df[working_df[f_col].isin([str(v) for v in f_vals])]
+#                 else:
+#                     working_df = working_df[working_df[f_col] == str(f_vals)]
+
+#     # Handle blank exclusion or labeling
+#     target_dim_cols = list(rows) + list(columns)
+#     if exclude_blank:
+#         for col in target_dim_cols:
+#             if col in working_df.columns:
+#                 working_df = working_df[working_df[col] != ""]
+#     else:
+#         for col in target_dim_cols:
+#             if col in working_df.columns:
+#                 working_df[col] = working_df[col].replace("", "(Blank)")
+
+#     if working_df.empty:
+#         return None
+
+#     # 2. Configure Aggregation Strategy
+#     agg_mode = agg_func.lower()
+#     if agg_mode in ["sum", "mean"] and values and values in working_df.columns:
+#         working_df[values] = pd.to_numeric(working_df[values], errors="coerce").fillna(0)
+#         target_val = values
+#         pd_agg = "sum" if agg_mode == "sum" else "mean"
+#     elif agg_mode == "nunique" and values and values in working_df.columns:
+#         target_val = values
+#         pd_agg = pd.Series.nunique
+#     else:
+#         working_df["_record_count_"] = 1
+#         target_val = "_record_count_"
+#         pd_agg = "sum" if agg_mode != "count" else "count"
+
+#     # Build core pivot table
+#     if columns:
+#         pivot_df = pd.pivot_table(
+#             working_df,
+#             index=rows,
+#             columns=columns,
+#             values=target_val,
+#             aggfunc=pd_agg,
+#             fill_value=0,
+#         )
+#         if isinstance(pivot_df.columns, pd.MultiIndex):
+#             pivot_df.columns = [" | ".join(map(str, c)).strip() for c in pivot_df.columns.values]
+#         else:
+#             pivot_df.columns = [str(c) for c in pivot_df.columns]
+#         val_cols = list(pivot_df.columns)
+#         pivot_df = pivot_df.reset_index()
+#     else:
+#         metric_label = f"{agg_func.title()} of {values}" if values else "Count of Records"
+#         pivot_df = working_df.groupby(rows, as_index=False, dropna=False).agg({target_val: pd_agg})
+#         pivot_df = pivot_df.rename(columns={target_val: metric_label})
+#         val_cols = [metric_label]
+
+#     # Add Row-wise Grand Total column when column fields are active
+#     if show_grand_total and columns:
+#         if agg_mode == "mean":
+#             pivot_df["Grand Total"] = pivot_df[val_cols].mean(axis=1)
+#         else:
+#             pivot_df["Grand Total"] = pivot_df[val_cols].sum(axis=1)
+#         val_cols.append("Grand Total")
+
+#     # 3. Assemble Rows, Subtotals & Grand Total
+#     final_rows = []
+#     row_types = []
+
+#     if len(rows) > 1 and show_subtotals:
+#         for top_key, group in pivot_df.groupby(rows[0], sort=False):
+#             for _, r in group.iterrows():
+#                 final_rows.append(r.to_dict())
+#                 row_types.append("data")
+
+#             sub_dict = {col: "" for col in rows}
+#             sub_dict[rows[0]] = f"{top_key} Subtotal"
+#             for v_col in val_cols:
+#                 sub_dict[v_col] = group[v_col].mean() if agg_mode == "mean" else group[v_col].sum()
+#             final_rows.append(sub_dict)
+#             row_types.append("subtotal")
+#     else:
+#         for _, r in pivot_df.iterrows():
+#             final_rows.append(r.to_dict())
+#             row_types.append("data")
+
+#     if show_grand_total:
+#         gt_dict = {col: "Grand Total" if idx == 0 else "" for idx, col in enumerate(rows)}
+#         for v_col in val_cols:
+#             gt_dict[v_col] = pivot_df[v_col].mean() if agg_mode == "mean" else pivot_df[v_col].sum()
+#         final_rows.append(gt_dict)
+#         row_types.append("grand_total")
+
+#     display_df = pd.DataFrame(final_rows)
+
+#     # 4. Apply Layout Style: Compact vs. Tabular
+#     if layout_style == "Compact" and len(rows) > 1:
+#         compact_col_name = " / ".join(rows)
+#         compact_labels = []
+#         expanded_rows = []
+#         expanded_types = []
+#         seen_parents = set()
+
+#         for idx, r in display_df.iterrows():
+#             r_type = row_types[idx]
+#             if r_type in ["subtotal", "grand_total"]:
+#                 compact_labels.append(r[rows[0]])
+#                 expanded_rows.append(r.to_dict())
+#                 expanded_types.append(r_type)
+#             else:
+#                 parent_val = r[rows[0]]
+#                 if parent_val not in seen_parents:
+#                     seen_parents.add(parent_val)
+#                     parent_row = {v: "" for v in val_cols}
+#                     compact_labels.append(f"▸ {parent_val}")
+#                     expanded_rows.append(parent_row)
+#                     expanded_types.append("group_header")
+
+#                 child_label = " | ".join([str(r[c]) for c in rows[1:] if str(r[c]) != ""])
+#                 compact_labels.append(f"    {child_label}")
+#                 expanded_rows.append(r.to_dict())
+#                 expanded_types.append("data")
+
+#         display_df = pd.DataFrame(expanded_rows)
+#         display_df.insert(0, compact_col_name, compact_labels)
+#         display_df = display_df[[compact_col_name] + val_cols]
+#         row_headers = [compact_col_name]
+#         row_types = expanded_types
+#     else:
+#         row_headers = list(rows)
+#         display_df = display_df[row_headers + val_cols]
+
+#     # 5. Format Numeric Values
+#     formatted_df = display_df.copy()
+#     num_fmt = "{:,.2f}".format if agg_mode in ["sum", "mean"] else "{:,.0f}".format
+
+#     for v_col in val_cols:
+#         formatted_df[v_col] = [
+#             "" if val == "" else num_fmt(float(val))
+#             for val in formatted_df[v_col]
+#         ]
+
+#     return _apply_excel_table_styling(formatted_df, row_types, row_headers, val_cols)
+
 
 def dataframe_excel_pivot_builder(
     df: pd.DataFrame,
@@ -4082,11 +4313,15 @@ def dataframe_excel_pivot_builder(
     agg_func: str = "count",          # Options: "count", "sum", "nunique", "mean"
     filters: dict = None,             # Format: {"ColumnName": ["Val1", "Val2"]}
     show_subtotals: bool = True,
+    show_col_subtotals: bool = True,  # Subtotals for multi-level column hierarchy
     show_grand_total: bool = True,
     exclude_blank: bool = True,
     layout_style: str = "Tabular",    # Options: "Tabular" or "Compact"
 ):
-
+    """
+    Excel-style Interactive Pivot Table Builder supporting Row Hierarchy,
+    Column Hierarchy (Subcategories), Dynamic Age Groups, and Subtotals.
+    """
     if df is None or df.empty or not rows:
         return None
 
@@ -4142,9 +4377,11 @@ def dataframe_excel_pivot_builder(
         target_val = "_record_count_"
         pd_agg = "sum" if agg_mode != "count" else "count"
 
-    # Build core pivot table
+    is_multi_col = len(columns) > 1
+
+    # 3. Build Core Pivot Table (Supporting Multi-Level Column Hierarchy)
     if columns:
-        pivot_df = pd.pivot_table(
+        pivot_raw = pd.pivot_table(
             working_df,
             index=rows,
             columns=columns,
@@ -4152,38 +4389,81 @@ def dataframe_excel_pivot_builder(
             aggfunc=pd_agg,
             fill_value=0,
         )
-        if isinstance(pivot_df.columns, pd.MultiIndex):
-            pivot_df.columns = [" | ".join(map(str, c)).strip() for c in pivot_df.columns.values]
+
+        # If multiple column fields are selected, preserve MultiIndex & optionally add Column Subtotals
+        if is_multi_col and isinstance(pivot_raw.columns, pd.MultiIndex):
+            n_col_levels = pivot_raw.columns.nlevels
+            ordered_blocks = []
+
+            if show_col_subtotals:
+                for top_val in pivot_raw.columns.get_level_values(0).unique():
+                    sub_slice = pivot_raw.xs(top_val, axis=1, level=0, drop_level=False)
+                    ordered_blocks.append(sub_slice)
+
+                    # Compute subtotal across subcategories for this top-level column
+                    sub_series = (
+                        sub_slice.mean(axis=1) if agg_mode == "mean" else sub_slice.sum(axis=1)
+                    )
+                    sub_tuple = (top_val, "Subtotal") + ("",) * (n_col_levels - 2)
+                    sub_df = pd.DataFrame({sub_tuple: sub_series}, index=pivot_raw.index)
+                    ordered_blocks.append(sub_df)
+
+                pivot_raw = pd.concat(ordered_blocks, axis=1)
+                pivot_raw.columns = pd.MultiIndex.from_tuples(pivot_raw.columns)
+
+            val_cols = list(pivot_raw.columns)
+            base_val_cols = [c for c in val_cols if "Subtotal" not in str(c)]
+
+            # Add Row-wise Grand Total column
+            if show_grand_total:
+                gt_col_key = ("Grand Total",) + ("",) * (n_col_levels - 1)
+                pivot_raw[gt_col_key] = (
+                    pivot_raw[base_val_cols].mean(axis=1)
+                    if agg_mode == "mean"
+                    else pivot_raw[base_val_cols].sum(axis=1)
+                )
+                val_cols.append(gt_col_key)
+
+            # Flatten index safely into tuple-keyed columns so MultiIndex headers stay intact
+            row_df = pivot_raw.index.to_frame().reset_index(drop=True)
+            row_col_tuples = [(r,) + ("",) * (n_col_levels - 1) for r in rows]
+            row_df.columns = pd.MultiIndex.from_tuples(row_col_tuples)
+
+            val_df = pivot_raw.reset_index(drop=True)
+            pivot_df = pd.concat([row_df, val_df], axis=1)
+            row_keys = row_col_tuples
         else:
-            pivot_df.columns = [str(c) for c in pivot_df.columns]
-        val_cols = list(pivot_df.columns)
-        pivot_df = pivot_df.reset_index()
+            pivot_raw.columns = [str(c) for c in pivot_raw.columns]
+            val_cols = list(pivot_raw.columns)
+            pivot_df = pivot_raw.reset_index()
+            row_keys = list(rows)
+
+            if show_grand_total:
+                pivot_df["Grand Total"] = (
+                    pivot_df[val_cols].mean(axis=1)
+                    if agg_mode == "mean"
+                    else pivot_df[val_cols].sum(axis=1)
+                )
+                val_cols.append("Grand Total")
     else:
         metric_label = f"{agg_func.title()} of {values}" if values else "Count of Records"
         pivot_df = working_df.groupby(rows, as_index=False, dropna=False).agg({target_val: pd_agg})
         pivot_df = pivot_df.rename(columns={target_val: metric_label})
         val_cols = [metric_label]
+        row_keys = list(rows)
 
-    # Add Row-wise Grand Total column when column fields are active
-    if show_grand_total and columns:
-        if agg_mode == "mean":
-            pivot_df["Grand Total"] = pivot_df[val_cols].mean(axis=1)
-        else:
-            pivot_df["Grand Total"] = pivot_df[val_cols].sum(axis=1)
-        val_cols.append("Grand Total")
-
-    # 3. Assemble Rows, Subtotals & Grand Total
+    # 4. Assemble Rows, Row Subtotals & Bottom Grand Total
     final_rows = []
     row_types = []
 
-    if len(rows) > 1 and show_subtotals:
-        for top_key, group in pivot_df.groupby(rows[0], sort=False):
+    if len(row_keys) > 1 and show_subtotals:
+        for top_key, group in pivot_df.groupby(row_keys[0], sort=False):
             for _, r in group.iterrows():
                 final_rows.append(r.to_dict())
                 row_types.append("data")
 
-            sub_dict = {col: "" for col in rows}
-            sub_dict[rows[0]] = f"{top_key} Subtotal"
+            sub_dict = {col: "" for col in row_keys}
+            sub_dict[row_keys[0]] = f"{top_key} Subtotal"
             for v_col in val_cols:
                 sub_dict[v_col] = group[v_col].mean() if agg_mode == "mean" else group[v_col].sum()
             final_rows.append(sub_dict)
@@ -4194,7 +4474,7 @@ def dataframe_excel_pivot_builder(
             row_types.append("data")
 
     if show_grand_total:
-        gt_dict = {col: "Grand Total" if idx == 0 else "" for idx, col in enumerate(rows)}
+        gt_dict = {col: "Grand Total" if idx == 0 else "" for idx, col in enumerate(row_keys)}
         for v_col in val_cols:
             gt_dict[v_col] = pivot_df[v_col].mean() if agg_mode == "mean" else pivot_df[v_col].sum()
         final_rows.append(gt_dict)
@@ -4202,9 +4482,14 @@ def dataframe_excel_pivot_builder(
 
     display_df = pd.DataFrame(final_rows)
 
-    # 4. Apply Layout Style: Compact vs. Tabular
-    if layout_style == "Compact" and len(rows) > 1:
-        compact_col_name = " / ".join(rows)
+    # 5. Apply Layout Style: Compact vs. Tabular
+    if layout_style == "Compact" and len(row_keys) > 1:
+        compact_label_str = " / ".join(rows)
+        compact_col_key = (
+            (compact_label_str,) + ("",) * (len(columns) - 1)
+            if (is_multi_col and columns)
+            else compact_label_str
+        )
         compact_labels = []
         expanded_rows = []
         expanded_types = []
@@ -4213,11 +4498,11 @@ def dataframe_excel_pivot_builder(
         for idx, r in display_df.iterrows():
             r_type = row_types[idx]
             if r_type in ["subtotal", "grand_total"]:
-                compact_labels.append(r[rows[0]])
-                expanded_rows.append(r.to_dict())
+                compact_labels.append(r[row_keys[0]])
+                expanded_rows.append({v: r[v] for v in val_cols})
                 expanded_types.append(r_type)
             else:
-                parent_val = r[rows[0]]
+                parent_val = r[row_keys[0]]
                 if parent_val not in seen_parents:
                     seen_parents.add(parent_val)
                     parent_row = {v: "" for v in val_cols}
@@ -4225,21 +4510,24 @@ def dataframe_excel_pivot_builder(
                     expanded_rows.append(parent_row)
                     expanded_types.append("group_header")
 
-                child_label = " | ".join([str(r[c]) for c in rows[1:] if str(r[c]) != ""])
+                child_label = " | ".join([str(r[c]) for c in row_keys[1:] if str(r[c]) != ""])
                 compact_labels.append(f"    {child_label}")
-                expanded_rows.append(r.to_dict())
+                expanded_rows.append({v: r[v] for v in val_cols})
                 expanded_types.append("data")
 
         display_df = pd.DataFrame(expanded_rows)
-        display_df.insert(0, compact_col_name, compact_labels)
-        display_df = display_df[[compact_col_name] + val_cols]
-        row_headers = [compact_col_name]
+        display_df.insert(0, compact_col_key, compact_labels)
+        row_headers = [compact_col_key]
         row_types = expanded_types
     else:
-        row_headers = list(rows)
+        row_headers = list(row_keys)
         display_df = display_df[row_headers + val_cols]
 
-    # 5. Format Numeric Values
+    # Restore MultiIndex columns on display_df when multiple column levels are active
+    if is_multi_col and columns:
+        display_df.columns = pd.MultiIndex.from_tuples(display_df.columns)
+
+    # 6. Format Numeric Values
     formatted_df = display_df.copy()
     num_fmt = "{:,.2f}".format if agg_mode in ["sum", "mean"] else "{:,.0f}".format
 
