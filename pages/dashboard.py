@@ -847,119 +847,119 @@ elif section == "Enrollment":
 # ==============================================================================
 # INTERACTIVE EXCEL-STYLE PIVOT TABLE BUILDER (Native Table)
 # ==============================================================================
-def render_custom_pivot_table_section(df):
-    if df is None or df.empty:
-        st.info("No data available to build a pivot table.")
-        return
+    def render_custom_pivot_table_section(df):
+        if df is None or df.empty:
+            st.info("No data available to build a pivot table.")
+            return
 
-    all_cols = list(df.columns)
-    default_row = ["ReportingTsp11"] if "ReportingTsp11" in all_cols else [all_cols[0]]
-    default_col = ["TreatmentRegimen"] if "TreatmentRegimen" in all_cols else []
+        all_cols = list(df.columns)
+        default_row = ["ReportingTsp11"] if "ReportingTsp11" in all_cols else [all_cols[0]]
+        default_col = ["TreatmentRegimen"] if "TreatmentRegimen" in all_cols else []
 
-    with st.expander("⚙️ Configure Custom Pivot Table (Excel-Style)", expanded=True):
-        # Row 1: Field Selections (Rows, Columns, Values, Aggregation)
-        p_col1, p_col2, p_col3, p_col4 = st.columns(4)
-        with p_col1:
-            selected_rows = st.multiselect(
-                "Rows (Hierarchy)",
+        with st.expander("⚙️ Configure Custom Pivot Table (Excel-Style)", expanded=True):
+            # Row 1: Field Selections (Rows, Columns, Values, Aggregation)
+            p_col1, p_col2, p_col3, p_col4 = st.columns(4)
+            with p_col1:
+                selected_rows = st.multiselect(
+                    "Rows (Hierarchy)",
+                    options=all_cols,
+                    default=default_row,
+                    key="piv_rows_tbl"
+                )
+            with p_col2:
+                avail_cols = [c for c in all_cols if c not in selected_rows]
+                selected_cols = st.multiselect(
+                    "Columns",
+                    options=avail_cols,
+                    default=[c for c in default_col if c in avail_cols],
+                    key="piv_cols_tbl"
+                )
+            with p_col3:
+                agg_method = st.selectbox(
+                    "Calculation Method",
+                    options=["Count", "Sum", "Count Unique", "Average"],
+                    index=0,
+                    key="piv_agg_tbl"
+                )
+            with p_col4:
+                val_options = ["(Record Count)"] + all_cols if agg_method == "Count" else all_cols
+                selected_val = st.selectbox(
+                    "Value Field",
+                    options=val_options,
+                    index=0,
+                    key="piv_val_tbl"
+                )
+
+            # Row 2: Dynamic Filters
+            filter_cols = st.multiselect(
+                "Filter Fields (Optional)",
                 options=all_cols,
-                default=default_row,
-                key="piv_rows_tbl"
+                default=[c for c in ["Treatmentreferral", "TypeofTBTreatment"] if c in all_cols],
+                key="piv_filter_cols_tbl"
             )
-        with p_col2:
-            avail_cols = [c for c in all_cols if c not in selected_rows]
-            selected_cols = st.multiselect(
-                "Columns",
-                options=avail_cols,
-                default=[c for c in default_col if c in avail_cols],
-                key="piv_cols_tbl"
-            )
-        with p_col3:
-            agg_method = st.selectbox(
-                "Calculation Method",
-                options=["Count", "Sum", "Count Unique", "Average"],
-                index=0,
-                key="piv_agg_tbl"
-            )
-        with p_col4:
-            val_options = ["(Record Count)"] + all_cols if agg_method == "Count" else all_cols
-            selected_val = st.selectbox(
-                "Value Field",
-                options=val_options,
-                index=0,
-                key="piv_val_tbl"
-            )
+            active_filters = {}
+            if filter_cols:
+                f_ui_cols = st.columns(min(len(filter_cols), 4))
+                for idx, f_col in enumerate(filter_cols):
+                    with f_ui_cols[idx % len(f_ui_cols)]:
+                        unique_vals = sorted(
+                            df[f_col].dropna().astype(str).str.strip().unique().tolist()
+                        )
+                        chosen_vals = st.multiselect(
+                            f"Filter: {f_col}",
+                            options=unique_vals,
+                            default=unique_vals,
+                            key=f"piv_fval_tbl_{f_col}"
+                        )
+                        active_filters[f_col] = chosen_vals
 
-        # Row 2: Dynamic Filters
-        filter_cols = st.multiselect(
-            "Filter Fields (Optional)",
-            options=all_cols,
-            default=[c for c in ["Treatmentreferral", "TypeofTBTreatment"] if c in all_cols],
-            key="piv_filter_cols_tbl"
+            st.markdown("---")
+
+            # Row 3: Layout & Total Options
+            opt1, opt2, opt3, opt4 = st.columns(4)
+            with opt1:
+                layout_style = st.radio(
+                    "Report Layout",
+                    options=["Tabular", "Compact"],
+                    horizontal=True,
+                    key="piv_layout_tbl"
+                )
+            with opt2:
+                show_subtotals = st.checkbox("Show Subtotals", value=True, key="piv_sub_tbl")
+            with opt3:
+                show_grand_total = st.checkbox("Show Grand Total", value=True, key="piv_gt_tbl")
+            with opt4:
+                exclude_blank = st.checkbox("Exclude Blanks", value=True, key="piv_blank_tbl")
+
+        if not selected_rows:
+            st.warning("Please select at least one field in **Rows (Hierarchy)** to generate the pivot table.")
+            return
+
+        agg_map = {
+            "Count": "count",
+            "Sum": "sum",
+            "Count Unique": "nunique",
+            "Average": "mean"
+        }
+        val_field = None if selected_val == "(Record Count)" else selected_val
+
+        styled_pivot = dataframe_excel_pivot_builder(
+            df=df,
+            rows=selected_rows,
+            columns=selected_cols,
+            values=val_field,
+            agg_func=agg_map[agg_method],
+            filters=active_filters,
+            show_subtotals=show_subtotals,
+            show_grand_total=show_grand_total,
+            exclude_blank=exclude_blank,
+            layout_style=layout_style,
         )
-        active_filters = {}
-        if filter_cols:
-            f_ui_cols = st.columns(min(len(filter_cols), 4))
-            for idx, f_col in enumerate(filter_cols):
-                with f_ui_cols[idx % len(f_ui_cols)]:
-                    unique_vals = sorted(
-                        df[f_col].dropna().astype(str).str.strip().unique().tolist()
-                    )
-                    chosen_vals = st.multiselect(
-                        f"Filter: {f_col}",
-                        options=unique_vals,
-                        default=unique_vals,
-                        key=f"piv_fval_tbl_{f_col}"
-                    )
-                    active_filters[f_col] = chosen_vals
 
-        st.markdown("---")
-
-        # Row 3: Layout & Total Options
-        opt1, opt2, opt3, opt4 = st.columns(4)
-        with opt1:
-            layout_style = st.radio(
-                "Report Layout",
-                options=["Tabular", "Compact"],
-                horizontal=True,
-                key="piv_layout_tbl"
-            )
-        with opt2:
-            show_subtotals = st.checkbox("Show Subtotals", value=True, key="piv_sub_tbl")
-        with opt3:
-            show_grand_total = st.checkbox("Show Grand Total", value=True, key="piv_gt_tbl")
-        with opt4:
-            exclude_blank = st.checkbox("Exclude Blanks", value=True, key="piv_blank_tbl")
-
-    if not selected_rows:
-        st.warning("Please select at least one field in **Rows (Hierarchy)** to generate the pivot table.")
-        return
-
-    agg_map = {
-        "Count": "count",
-        "Sum": "sum",
-        "Count Unique": "nunique",
-        "Average": "mean"
-    }
-    val_field = None if selected_val == "(Record Count)" else selected_val
-
-    styled_pivot = dataframe_excel_pivot_builder(
-        df=df,
-        rows=selected_rows,
-        columns=selected_cols,
-        values=val_field,
-        agg_func=agg_map[agg_method],
-        filters=active_filters,
-        show_subtotals=show_subtotals,
-        show_grand_total=show_grand_total,
-        exclude_blank=exclude_blank,
-        layout_style=layout_style,
-    )
-
-    safe_table(styled_pivot)
+        safe_table(styled_pivot)
 
 
-safe_section("Custom Interactive Pivot Table", lambda: render_custom_pivot_table_section(filtered_df))
+    safe_section("Custom Interactive Pivot Table", lambda: render_custom_pivot_table_section(filtered_df))
 
 st.divider()
 st.caption("YgnTBPro • Streamlit Community Cloud • Data source: Supabase")
