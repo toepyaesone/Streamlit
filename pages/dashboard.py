@@ -1089,8 +1089,8 @@ elif section == "Enrollment":
 
             if enable_age_group and age_source_col in working_df.columns:
                 numeric_age = pd.to_numeric(working_df[age_source_col], errors="coerce")
-                under_label = f"Under {age_cutoff}" #f"Under {age_cutoff} (<{age_cutoff})"
-                above_label = f"{age_cutoff} and Above" #f"{age_cutoff} & Above (≥{age_cutoff})"
+                under_label = f" age < {age_cutoff}" #f"Under {age_cutoff} (<{age_cutoff})"
+                above_label = f"age ≥ {age_cutoff}" #f"{age_cutoff} & Above (≥{age_cutoff})"
                 working_df["Age Group"] = np.where(
                     numeric_age.isna(),
                     "",
