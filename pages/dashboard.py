@@ -733,10 +733,26 @@ elif section == "Enrollment":
             optional_include_total=True,
         )
     ))
-    
+
+    funnel_column_criteria = {
+        "Reasonforexamination": ["Diagnosis"],
+        "Cxrr": ["Requested"],
+        "CXRresult": ["TB Suspect", "TB Healed", "TB Active"],
+        "Genexpertrequested": ["Requested"],
+        "GeneXpertresult": ["N", "T", "TT", "TI", "RR"],
+        "Bact_status": ["BC"],
+        "Case": ["TB"],
+        "Treatmentreferral": ["Registered"],
+    }
+    funnel_column_rename = [
+        "Screening", "CXR Request", "CXR Abnormality", "Gene Request",
+        "Gene Result", "Bact Confirmed", "Notified TB", "Treatment Registered",
+    ]
     safe_section("TB Cascade by Approach", lambda: safe_plotly(
             plotly_funnel(filtered_df, funnel_column_criteria, funnel_column_rename, "Approach")
         ))
+
+    safe_section("Chest X-ray vs GeneXpert", lambda: safe_plotly(function_heatmap(filtered_df, "CXRresult", "GeneXpertresult")))
     
     # safe_section("TB Diagnosis for selected month", lambda: safe_table(
     #     dataframe_table_builder(
