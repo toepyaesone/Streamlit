@@ -714,7 +714,7 @@ elif section == "Enrollment":
             column={
                 "Registered Notified Cases": {"TypeofTBTreatment": ["DS-TB","DR-TB"]},
                 "Gene Xpert Tested": {"GeneXpertresult": ["N", "I", "T", "RR", "TI", "TT"]},
-                "Gene Xpert RR": {"GeneXpertresult": ["RR"]},
+                "Gene Xpert Result (RR)": {"GeneXpertresult": ["RR"]},
             },
             filters={"Treatmentreferral": "Registered", "TypeofTBTreatment": ["DS-TB","DR-TB"]},
             pct_numerator="Gene Xpert Tested",
