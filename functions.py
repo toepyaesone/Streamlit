@@ -4072,24 +4072,79 @@ def dataframe_table_builder(
 #     )
 #     return styler
 
+# def _apply_excel_table_styling(
+#     formatted_df: pd.DataFrame,
+#     row_types: list,
+#     row_headers: list,
+#     val_cols: list
+# ):
+#     def style_rows(row):
+#         idx = row.name
+#         r_type = row_types[idx] if idx < len(row_types) else "data"
+
+#         if r_type == "grand_total":
+#             bg = "#CBD5E1"  # Darker slate highlight for Grand Total
+#             weight = "bold"
+#         elif r_type == "subtotal":
+#             bg = "#E2E8F0"  # Medium slate highlight for Subtotal
+#             weight = "bold"
+#         elif r_type == "group_header":
+#             bg = "#F1F5F9"  # Soft tint for Compact group headers
+#             weight = "bold"
+#         else:
+#             bg = "#FFFFFF" if idx % 2 == 0 else "#F8FAFC"
+#             weight = "normal"
+
+#         styles = []
+#         for col in row.index:
+#             is_row_hdr = col in row_headers
+#             # Highlight column-level subtotal cells slightly
+#             is_col_sub = (isinstance(col, tuple) and "Subtotal" in str(col[-1])) or ("Subtotal" in str(col))
+#             cell_bg = "#E2E8F0" if (is_col_sub and r_type == "data") else bg
+#             cell_weight = "bold" if is_col_sub else weight
+#             align = "left" if is_row_hdr else "right"
+#             styles.append(
+#                 f"background-color: {cell_bg}; color: #0F172A; font-weight: {cell_weight}; text-align: {align};"
+#             )
+#         return styles
+
+#     styler = (
+#         formatted_df.style
+#         .apply(style_rows, axis=1)
+#         .set_table_styles([
+#             {
+#                 "selector": "th",
+#                 "props": [
+#                     ("background-color", "#1E293B"),
+#                     ("color", "white"),
+#                     ("font-weight", "bold"),
+#                     ("text-align", "center"),
+#                     ("border", "1px solid #334155"),
+#                 ],
+#             }
+#         ])
+#     )
+#     return styler
+
 def _apply_excel_table_styling(
-    formatted_df: pd.DataFrame,
+    df_to_style: pd.DataFrame,
     row_types: list,
     row_headers: list,
-    val_cols: list
+    val_cols: list,
+    num_fmt: str = "{:,.0f}"
 ):
     def style_rows(row):
         idx = row.name
         r_type = row_types[idx] if idx < len(row_types) else "data"
 
         if r_type == "grand_total":
-            bg = "#CBD5E1"  # Darker slate highlight for Grand Total
+            bg = "#CBD5E1"
             weight = "bold"
         elif r_type == "subtotal":
-            bg = "#E2E8F0"  # Medium slate highlight for Subtotal
+            bg = "#E2E8F0"
             weight = "bold"
         elif r_type == "group_header":
-            bg = "#F1F5F9"  # Soft tint for Compact group headers
+            bg = "#F1F5F9"
             weight = "bold"
         else:
             bg = "#FFFFFF" if idx % 2 == 0 else "#F8FAFC"
@@ -4098,34 +4153,56 @@ def _apply_excel_table_styling(
         styles = []
         for col in row.index:
             is_row_hdr = col in row_headers
-            # Highlight column-level subtotal cells slightly
             is_col_sub = (isinstance(col, tuple) and "Subtotal" in str(col[-1])) or ("Subtotal" in str(col))
             cell_bg = "#E2E8F0" if (is_col_sub and r_type == "data") else bg
-            cell_weight = "bold" if is_col_sub else weight
+            cell_weight = "bold" if (is_col_sub or is_row_hdr and r_type != "data") else weight
             align = "left" if is_row_hdr else "right"
+            min_w = "160px" if is_row_hdr else "110px"
+
             styles.append(
-                f"background-color: {cell_bg}; color: #0F172A; font-weight: {cell_weight}; text-align: {align};"
+                f"background-color: {cell_bg}; color: #0F172A; font-weight: {cell_weight}; "
+                f"text-align: {align}; min-width: {min_w}; padding: 6px 12px; "
+                f"white-space: nowrap; border: 1px solid #CBD5E1;"
             )
         return styles
 
+    # Format only value columns using Styler.format so numbers stay numeric
+    format_dict = {col: num_fmt for col in val_cols if col in df_to_style.columns}
+
     styler = (
-        formatted_df.style
+        df_to_style.style
         .apply(style_rows, axis=1)
+        .format(format_dict, na_rep="")
+        .hide(axis="index")
         .set_table_styles([
+            {
+                "selector": "table",
+                "props": [
+                    ("border-collapse", "collapse"),
+                    ("width", "max-content"),
+                    ("min-width", "100%"),
+                    ("font-family", "sans-serif"),
+                    ("font-size", "13px"),
+                ],
+            },
             {
                 "selector": "th",
                 "props": [
                     ("background-color", "#1E293B"),
-                    ("color", "white"),
+                    ("color", "#FFFFFF"),
                     ("font-weight", "bold"),
                     ("text-align", "center"),
+                    ("padding", "8px 12px"),
                     ("border", "1px solid #334155"),
+                    ("white-space", "nowrap"),
+                    ("position", "sticky"),
+                    ("top", "0"),
+                    ("z-index", "2"),
                 ],
-            }
+            },
         ])
     )
     return styler
-
 
 # def dataframe_excel_pivot_builder(
 #     df: pd.DataFrame,
@@ -4527,14 +4604,23 @@ def dataframe_excel_pivot_builder(
     if is_multi_col and columns:
         display_df.columns = pd.MultiIndex.from_tuples(display_df.columns)
 
-    # 6. Format Numeric Values
+    # # 6. Format Numeric Values
+    # formatted_df = display_df.copy()
+    # num_fmt = "{:,.2f}".format if agg_mode in ["sum", "mean"] else "{:,.0f}".format
+
+    # for v_col in val_cols:
+    #     formatted_df[v_col] = [
+    #         "" if val == "" else num_fmt(float(val))
+    #         for val in formatted_df[v_col]
+    #     ]
+
+    # return _apply_excel_table_styling(formatted_df, row_types, row_headers, val_cols)
+
+# 6. Keep Value Columns Numeric (use np.nan for empty group header cells)
     formatted_df = display_df.copy()
-    num_fmt = "{:,.2f}".format if agg_mode in ["sum", "mean"] else "{:,.0f}".format
+    num_fmt = "{:,.2f}" if agg_mode in ["sum", "mean"] else "{:,.0f}"
 
     for v_col in val_cols:
-        formatted_df[v_col] = [
-            "" if val == "" else num_fmt(float(val))
-            for val in formatted_df[v_col]
-        ]
+        formatted_df[v_col] = pd.to_numeric(formatted_df[v_col], errors="coerce")
 
-    return _apply_excel_table_styling(formatted_df, row_types, row_headers, val_cols)
+    return _apply_excel_table_styling(formatted_df, row_types, row_headers, val_cols, num_fmt=num_fmt)
