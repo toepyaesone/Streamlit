@@ -1106,7 +1106,7 @@ elif section == "Enrollment":
             # Refresh available columns (now includes "Age Group" if enabled)
             all_cols = list(working_df.columns)
             default_row = ["ReportingTsp11"] if "ReportingTsp11" in all_cols else [all_cols[0]]
-            default_col = ["Genexpertrequested"] if "Genexpertrequested" in all_cols else []
+            default_col = ["GXP"] if "GXP" in all_cols else []
             if enable_age_group and "Age Group" in all_cols and "Age Group" not in default_col:
                 default_col = default_col + ["Age Group"]
 
