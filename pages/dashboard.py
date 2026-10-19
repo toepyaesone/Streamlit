@@ -1165,7 +1165,7 @@ elif section == "Enrollment":
             with opt4:
                 show_grand_total = st.checkbox("Show Grand Total", value=True, key="piv_gt_tbl")
             with opt5:
-                exclude_blank = st.checkbox("Exclude Blanks", value=True, key="piv_blank_tbl")
+                exclude_blank = st.checkbox("Exclude Blanks", value=False, key="piv_blank_tbl")
 
         if not selected_rows:
             st.warning("Please select at least one field in **Rows (Hierarchy)** to generate the pivot table.")
