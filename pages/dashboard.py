@@ -712,7 +712,7 @@ elif section == "Enrollment":
             df=filtered_df,
             row=["ReportingTsp11"],
             column={
-                "Registered DS-TB Cases": {"TypeofTBTreatment": ["DS-TB"]},
+                "Registered Notified Cases": {"TypeofTBTreatment": ["DS-TB","DR-TB"]},
                 "Gene Xpert Tested": {"GeneXpertresult": ["N", "I", "T", "RR", "TI", "TT"]},
                 "Gene Xpert RR": {"GeneXpertresult": ["RR"]},
             },
