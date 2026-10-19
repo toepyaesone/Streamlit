@@ -718,7 +718,7 @@ elif section == "Enrollment":
             },
             filters={"Treatmentreferral": "Registered"},
             pct_numerator="Gene Xpert Tested",
-            pct_denominator="Registered DS-TB Cases",
+            pct_denominator="Registered Notified Cases",
             pct_col_name="Gene Xpert Tested (%)",
             optional_include_total=True,
             optional_exclude_blank=True,
