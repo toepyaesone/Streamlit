@@ -683,16 +683,8 @@ elif section == "🔎 Analysis":
         )
     ))
 elif section == "Enrollment":
-    safe_section("Enrollment Data Overview", lambda: safe_plotly(
-        plotly_table_count_percent(
-            df=filtered_df,
-            column_list=["Treatmentreferral", "TreatmentRegimen", "TypeofTBTreatment", "Placeforreferral"],
-            optional_exclude_blank=True,
-            optional_include_total=True,
-        )
-    ))
 
-    safe_section("All Registered DS TB case for selected month", lambda: safe_plotly(
+    safe_section("All Registered DS TB cases", lambda: safe_plotly(
         plotly_table_builder(
             df=filtered_df,
             row=["ReportingTsp11"],
@@ -715,7 +707,7 @@ elif section == "Enrollment":
     # ))
 
 
-    safe_section("TB Diagnosis for selected month", lambda: safe_plotly(
+    safe_section("TB Diagnosis of Registered Cases", lambda: safe_plotly(
         plotly_table_builder(
             df=filtered_df,
             row=["ReportingTsp11"],
@@ -724,7 +716,7 @@ elif section == "Enrollment":
                 "Gene Xpert Tested": {"GeneXpertresult": ["N", "I", "T", "RR", "TI", "TT"]},
                 "Gene Xpert RR": {"GeneXpertresult": ["RR"]},
             },
-            filters={"Treatmentreferral": "Registered", "TypeofTBTreatment": "DS-TB"},
+            filters={"Treatmentreferral": "Registered"},
             pct_numerator="Gene Xpert Tested",
             pct_denominator="Registered DS-TB Cases",
             pct_col_name="Gene Xpert Tested (%)",
@@ -733,6 +725,19 @@ elif section == "Enrollment":
         )
     ))
 
+    safe_section("Enrollment Data Overview", lambda: safe_plotly(
+        plotly_table_count_percent(
+            df=filtered_df,
+            column_list=["Treatmentreferral", "Placeforreferral","TypeofTBTreatment","TreatmentRegimen","GeneXpertresult" ,"CXRresult"],
+            optional_exclude_blank=True,
+            optional_include_total=True,
+        )
+    ))
+    
+    safe_section("TB Cascade by Approach", lambda: safe_plotly(
+            plotly_funnel(filtered_df, funnel_column_criteria, funnel_column_rename, "Approach")
+        ))
+    
     # safe_section("TB Diagnosis for selected month", lambda: safe_table(
     #     dataframe_table_builder(
     #         df=filtered_df,
