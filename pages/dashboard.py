@@ -972,9 +972,13 @@ elif section == "Enrollment":
         base_cols = list(working_df.columns)
 
         # Detect likely Age column automatically for default selection
-        age_candidates = [c for c in base_cols if "age" in c.lower()]
-        default_age_col = age_candidates[0] if age_candidates else base_cols[0]
-
+        # Set default age column to 'Age' specifically (avoiding partial matches like 'WardVillage')
+        if "Age" in base_cols:
+            default_age_col = "Age"
+        else:
+            age_candidates = [c for c in base_cols if c.lower() in ["age", "ageyear", "age_year"]]
+            default_age_col = age_candidates[0] if age_candidates else base_cols[0]
+            
         with st.expander("⚙️ Configure Custom Pivot Table (Excel-Style)", expanded=True):
             # ------------------------------------------------------------------
             # Row 0: Dynamic Age Grouping Configuration (Slider Bar)
