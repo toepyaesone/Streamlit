@@ -1048,7 +1048,7 @@ elif section == "Enrollment":
                     "Age Cutoff (Under X vs. X and Above)",
                     min_value=1,
                     max_value=100,
-                    value=5,  # Default: Under 5 and Above 5 (slide to 8 for Under 8 and Above 8)
+                    value=8,  # Default: Under 5 and Above 5 (slide to 8 for Under 8 and Above 8)
                     step=1,
                     disabled=not enable_age_group,
                     key="piv_age_slider_tbl"
@@ -1073,7 +1073,7 @@ elif section == "Enrollment":
             # Refresh available columns (now includes "Age Group" if enabled)
             all_cols = list(working_df.columns)
             default_row = ["ReportingTsp11"] if "ReportingTsp11" in all_cols else [all_cols[0]]
-            default_col = ["TreatmentRegimen"] if "TreatmentRegimen" in all_cols else []
+            default_col = ["Genexpertrequested"] if "Genexpertrequested" in all_cols else []
             if enable_age_group and "Age Group" in all_cols and "Age Group" not in default_col:
                 default_col = default_col + ["Age Group"]
 
@@ -1095,7 +1095,7 @@ elif section == "Enrollment":
                     "Columns (Hierarchy / Subcategory)",
                     options=avail_cols,
                     default=[c for c in default_col if c in avail_cols],
-                    help="Select multiple fields (e.g., TreatmentRegimen then Age Group) to create nested column subcategories.",
+                    help="Select multiple fields (e.g., Genexpertrequested then Age Group) to create nested column subcategories.",
                     key="piv_cols_tbl"
                 )
             with p_col3:
@@ -1120,7 +1120,7 @@ elif section == "Enrollment":
             filter_cols = st.multiselect(
                 "Filter Fields (Optional)",
                 options=all_cols,
-                default=[c for c in ["Treatmentreferral", "TypeofTBTreatment"] if c in all_cols],
+                default=[c for c in ["Treatmentreferral", "TreatmentRegimen"] if c in all_cols],
                 key="piv_filter_cols_tbl"
             )
             active_filters = {}
