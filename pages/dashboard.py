@@ -240,34 +240,27 @@ def safe_section(title, fn):
 #     )
 
 def safe_table(styled_df):
-    """Renders a Pandas DataFrame or Styler safely as a native Streamlit table."""
     if styled_df is None:
         st.info("No data available for the current selection.")
         return
 
-    # Extract underlying DataFrame to check row count
     raw_df = styled_df.data if hasattr(styled_df, "data") else styled_df
     if raw_df.empty:
         st.info("No data available for the current selection.")
         return
 
-    # Render Styler to HTML and wrap in a responsive horizontal/vertical scroll container
-    table_html = styled_df.to_html()
-    scrollable_container = f"""
-    <div style="
-        width: 100%;
-        max-height: 600px;
-        overflow-x: auto;
-        overflow-y: auto;
-        border: 1px solid #CBD5E1;
-        border-radius: 6px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-        margin-bottom: 1rem;
-    ">
-        {table_html}
-    </div>
-    """
+    # Collapse newlines so Streamlit's Markdown parser never breaks out of the HTML block
+    table_html = styled_df.to_html().replace("\n", " ")
+
+    scrollable_container = (
+        '<div style="width: 100%; max-height: 600px; overflow-x: auto; overflow-y: auto; '
+        'border: 1px solid #CBD5E1; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); '
+        'margin-bottom: 1rem;">'
+        f'{table_html}'
+        '</div>'
+    )
     st.markdown(scrollable_container, unsafe_allow_html=True)
+    
 # -----------------------------------------------------------------------------
 # Main View Setup
 # -----------------------------------------------------------------------------
