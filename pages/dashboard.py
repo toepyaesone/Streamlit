@@ -187,7 +187,40 @@ def prepare_data(raw_dashboard: pd.DataFrame, raw_target: pd.DataFrame):
     dashboard = create_category_combined(
         dashboard, CATEGORY_PHC_CRITERIA, "PrimaryHealthcare"
     )
-    
+
+    # --- Insert GXP Column ---
+    if "Genexpertrequested" in dashboard.columns and "GeneXpertresult" in dashboard.columns:
+        req_col = (
+            dashboard["Genexpertrequested"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.replace(r"\.0$", "", regex=True)
+        )
+        res_col = (
+            dashboard["GeneXpertresult"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.replace(r"\.0$", "", regex=True)
+        )
+
+        is_requested = req_col.isin(["1", "Requested"])
+        is_tested = res_col.isin(["0", "N", "1", "I", "2", "T", "3", "RR", "4", "TI", "7", "TT"])
+        is_not_tested = res_col.isin(["5", "Denied", "6", "Missing"])
+
+        dashboard["GXP"] = np.select(
+            condlist=[
+                is_requested & is_tested,
+                is_requested & is_not_tested,
+            ],
+            choicelist=[
+                "Requested - Tested",
+                "Requested - Not Tested",
+            ],
+            default="Not Requested",
+        )
+
     if "Date" in dashboard.columns:
         dashboard["Date"] = pd.to_datetime(dashboard["Date"], errors="coerce")
         dashboard = dashboard.dropna(subset=["Date"]).copy()
